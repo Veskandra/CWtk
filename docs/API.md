@@ -83,7 +83,8 @@ typedef void (*WtkMenuFn)(WtkWidget *window, void *userdata);
 | `WtkSticky` | `WTK_STICKY_LEFT/TOP/RIGHT/BOTTOM`，`WTK_STICKY_HORIZONTAL/VERTICAL/ALL` |
 | `WtkAlign` | `WTK_ALIGN_LEFT/CENTER/RIGHT` |
 | `WtkButtonStyle` | `WTK_BUTTON_PRIMARY/SECONDARY/GHOST/DANGER` |
-| `WtkCursor` | `WTK_CURSOR_ARROW/HAND/IBEAM/CROSS/SIZE_H/SIZE_V` |
+| `WtkStyle` | `WTK_STYLE_AUTO/NATIVE/WINTK` |
+| `WtkCursor` | `WTK_CURSOR_ARROW/HAND/IBEAM/CROSS/SIZE_H/SIZE_V/SIZE_ALL/SIZE_NWSE/SIZE_NESW/NO` |
 | `WtkIcon` | `WTK_ICON_NONE/INFO/WARNING/ERROR/QUESTION` |
 | `WtkMouseButton` | `WTK_MOUSE_LEFT=1`, `WTK_MOUSE_RIGHT=2`, `WTK_MOUSE_MIDDLE=3` |
 | 字体样式 | `WTK_FONT_NORMAL/BOLD/ITALIC/UNDERLINE`（可按位或） |
@@ -146,6 +147,11 @@ void wtk_quit(WtkApp *app);
 int wtk_app_dpi(WtkApp *app);
 int wtk_scale(WtkApp *app, int logical_pixels);
 const char *wtk_app_ui_font_family(WtkApp *app);
+
+void wtk_app_set_style(WtkApp *app, WtkStyle style);
+WtkStyle wtk_app_get_style(WtkApp *app);
+WtkStyle wtk_app_resolved_style(WtkApp *app);
+const char *wtk_style_name(WtkStyle style);
 ```
 
 ### wtk_app_new
@@ -155,6 +161,7 @@ const char *wtk_app_ui_font_family(WtkApp *app);
 - 注册窗口类并创建隐藏的消息窗口。
 - 分配默认主题。
 - 根据 Windows 界面语言选择默认 UI 字体，并缓存其 UTF-8 名称。
+- 读取可选的 `WINTK_STYLE` 环境变量；默认请求 `WTK_STYLE_AUTO`。
 - 必须在任何 Win32 窗口创建前调用一次比较稳妥。
 
 ### wtk_run
@@ -170,6 +177,23 @@ const char *wtk_app_ui_font_family(WtkApp *app);
 - 释放定时器、菜单和延迟回收的控件。
 - 调用后不要继续使用任何 WinTk 句柄。
 
+### 视觉风格
+
+```c
+wtk_app_set_style(app, WTK_STYLE_AUTO);
+wtk_app_set_style(app, WTK_STYLE_NATIVE);
+wtk_app_set_style(app, WTK_STYLE_WINTK);
+```
+
+- `WTK_STYLE_AUTO` 是默认值；Windows 上解析为原生风格。
+- `WTK_STYLE_NATIVE` 用系统颜色和 UxTheme 绘制标准控件；原生 EDIT/LISTBOX 保持系统外观。
+- `WTK_STYLE_WINTK` 是原有的 WinTk 自绘风格。
+- `wtk_app_set_style()` 可以在窗口和控件创建后调用，会立即刷新现有控件并重新布局原生输入区。
+- `wtk_app_get_style()` 返回请求值；`wtk_app_resolved_style()` 返回实际生效值。
+- `WINTK_STYLE` 环境变量可在启动前配置 `auto`、`native` 或 `wintk`（也接受 `classic`、`custom`、`system`）。
+- 原生风格仍保留 `WTK_BUTTON_PRIMARY` 的强调色和 `WTK_BUTTON_DANGER` 的危险色语义。
+- `WtkTheme` 主要影响 `WTK_STYLE_WINTK`；原生风格使用系统颜色，显式设置的控件颜色仍会保留。
+
 ### 尺寸与字体辅助
 
 - `wtk_app_dpi()` 返回当前 DPI（常见为 96、120、144、192）。
@@ -180,6 +204,7 @@ const char *wtk_app_ui_font_family(WtkApp *app);
   - 日文和韩文系统优先对应的 CJK UI 字体；
   - 其他语言为 `Segoe UI`。
   - 字体是否可用会通过 GDI 字体枚举检查；不可用时回退到 `Segoe UI`。
+- `wtk_style_name(style)` 返回 `"Auto"`、`"Native"` 或 `"WinTk"`。
 
 ---
 
@@ -329,6 +354,7 @@ void wtk_widget_set_border(WtkWidget *widget, WtkColor color,
 void wtk_widget_set_visible(WtkWidget *widget, int visible);
 void wtk_widget_set_enabled(WtkWidget *widget, int enabled);
 void wtk_widget_set_cursor(WtkWidget *widget, WtkCursor cursor);
+void wtk_widget_set_focus_ring(WtkWidget *widget, int enabled);
 void wtk_widget_focus(WtkWidget *widget);
 void wtk_widget_redraw(WtkWidget *widget);
 void wtk_widget_destroy(WtkWidget *widget);
@@ -336,6 +362,8 @@ void wtk_widget_destroy(WtkWidget *widget);
 
 - `wtk_widget_hwnd` 返回宿主 HWND；Entry/Text/Listbox 的真正原生 child 需用 `GetWindow(hwnd, GW_CHILD)`。
 - `wtk_widget_set_font(..., family, ...)` 的 `family` 为 `NULL` 或空字符串时，使用 `wtk_app_ui_font_family()` 返回的本地化字体。中文应用推荐传 `NULL` 或显式传 `"Microsoft YaHei UI"`。
+- `set_cursor` 支持箭头、手型、I 型、十字、水平/垂直/全向缩放、斜向缩放和禁止光标。
+- `wtk_widget_set_focus_ring(widget, 0)` 可关闭 Canvas 等自定义控件的强调色焦点框（分隔条使用），不影响键盘焦点。
 - `set_border` 的 `width/radius` 为逻辑像素；主要用于 Frame、Button、原生输入宿主。
 - 隐藏控件会从布局中排除；显示后重新参与布局。
 - 禁用控件不参与 Tab 顺序，不接收鼠标。
@@ -593,7 +621,7 @@ wtk_widget_set_padding(card, 20, 20, 20, 20);
 
 WinTk 需要：
 
-- 链接库：`user32`, `gdi32`, `comctl32`
+- 链接库：`user32`, `gdi32`, `comctl32`, `uxtheme`
 - 编译定义：`UNICODE`, `_UNICODE`
 - Windows GUI 子系统：MinGW 的 `-mwindows`
 - 公共控件 v6 manifest（`resources/wintk.rc` 已包含）
@@ -658,6 +686,8 @@ build/libwintk.a
 - 不支持滚动容器和内容虚拟化。
 - `pack` 的混合方向布局与 Tk 的完整算法不完全相同。
 - `place` 只做固定坐标放置，不支持 anchor、比例尺寸或随父容器重排。
+- 原生风格用 UxTheme 绘制标准外观，但按钮、复选框等仍是 WinTk 宿主窗口；原生 EDIT/LISTBOX 才是独立系统控件子窗口。
+- 风格切换不会替换已经显式设置过的字体；需要完全统一的排版请在切换后重新设置字体。
 - 没有 per-monitor DPI 的实时重建；系统 DPI 在不同显示上可能看起来略有缩放差异。
 - 自绘控件使用 GDI，不支持 alpha 或硬件加速混合。
 - 这是一套小框架，目标是把 tkinter 式的编程模型带到纯 C/Win32 小工具中，而不是替代 Qt/GTK/WinUI。

@@ -20,14 +20,14 @@ LIB      := $(BUILD)/libwintk.a
 RES      := $(BUILD)/wintk-res.o
 GALLERY  := $(BUILD)/wintk_gallery.exe
 HELLO    := $(BUILD)/hello.exe
-DESIGNER := $(BUILD)/wintk_designer.exe
+DESIGNER := designer/build/wintk_designer.exe
 
 CPPFLAGS += -DUNICODE -D_UNICODE -Iinclude -Isrc
 CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS   += -finput-charset=UTF-8 -fexec-charset=UTF-8
 LDFLAGS  += -mwindows -static-libgcc
-LDLIBS   += -luser32 -lgdi32 -lcomctl32
+LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme
 
 LIB_SRCS := \
 	src/wtk_core.c \
@@ -48,7 +48,8 @@ gallery: $(GALLERY)
 
 hello: $(HELLO)
 
-designer: $(DESIGNER)
+designer:
+	$(MAKE) -C designer
 
 $(BUILD) $(OBJDIR):
 	@if not exist "$@" mkdir "$@"
@@ -68,14 +69,12 @@ $(GALLERY): examples/gallery.c $(LIB) $(RES) | $(BUILD)
 $(HELLO): examples/hello.c $(LIB) $(RES) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(DESIGNER): examples/designer.c examples/designer_model.c examples/designer_model.h $(LIB) $(RES) | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) examples/designer.c examples/designer_model.c $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS) -lcomdlg32
-
 run: $(GALLERY)
 	@start "" "$(GALLERY)"
 
-run-designer: $(DESIGNER)
+run-designer: designer
 	@start "" "$(DESIGNER)"
 
 clean:
+	$(MAKE) -C designer clean
 	@if exist "$(BUILD)" rmdir /S /Q "$(BUILD)"

@@ -25,6 +25,7 @@ struct GalleryState {
 
     WtkWidget *page_title;
     WtkWidget *page_subtitle;
+    WtkWidget *style_button;
     WtkWidget *pages[4];
     WtkWidget *nav[4];
     NavData nav_data[4];
@@ -181,6 +182,30 @@ static void on_about_click(WtkWidget *widget, WtkEvent *event, void *userdata)
     switch_page((GalleryState *)userdata, 3);
 }
 
+static void gallery_update_style_button(GalleryState *state)
+{
+    if (!state || !state->style_button)
+        return;
+    wtk_button_set_text(
+        state->style_button,
+        wtk_app_resolved_style(state->app) == WTK_STYLE_WINTK
+            ? "风格：WinTk"
+            : "风格：原生");
+}
+
+static void on_style_click(WtkWidget *widget, WtkEvent *event, void *userdata)
+{
+    GalleryState *state = (GalleryState *)userdata;
+    WtkStyle next;
+    (void)widget;
+    (void)event;
+    next = wtk_app_resolved_style(state->app) == WTK_STYLE_NATIVE
+               ? WTK_STYLE_WINTK
+               : WTK_STYLE_AUTO;
+    wtk_app_set_style(state->app, next);
+    gallery_update_style_button(state);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Sidebar and header                                                        */
 /* ------------------------------------------------------------------------- */
@@ -248,13 +273,20 @@ static void build_header(GalleryState *state, WtkWidget *main)
     const WtkTheme *theme = state->theme;
     WtkWidget *header = wtk_frame(main);
     WtkWidget *actions = wtk_frame(header);
+    WtkWidget *style = wtk_button(actions, "风格：原生");
     WtkWidget *about = wtk_button(actions, "关于");
     WtkWidget *titles = wtk_frame(header);
 
     wtk_pack(header, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 16);
     wtk_pack(actions, WTK_SIDE_RIGHT, WTK_FILL_NONE, 0, 0, 0);
+    wtk_button_set_style(style, WTK_BUTTON_SECONDARY);
+    wtk_pack(style, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 0, 0);
+    wtk_bind(style, WTK_EVENT_CLICK, on_style_click, state);
+    state->style_button = style;
+    gallery_update_style_button(state);
+
     wtk_button_set_style(about, WTK_BUTTON_SECONDARY);
-    wtk_pack(about, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 0, 0);
+    wtk_pack(about, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4, 0);
     wtk_bind(about, WTK_EVENT_CLICK, on_about_click, state);
 
     wtk_pack(titles, WTK_SIDE_LEFT, WTK_FILL_X, 1, 0, 0);
@@ -1042,8 +1074,8 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
     pack_top(paragraph, WTK_FILL_X, 0, 0, 6);
     bullets = new_label(
         intro,
-        "· 自绘控件全部使用 GDI 双缓冲\n"
-        "· 原生 EDIT/LISTBOX 控件嵌入圆角宿主\n"
+        "· 原生 Windows / WinTk 双视觉风格，可运行时切换\n"
+        "· 原生 EDIT/LISTBOX 控件嵌入自绘或原生宿主\n"
         "· UTF-8 API，支持中文与输入法，DPI 感知\n"
         "· Pack/Grid/Place 布局、定时器、菜单、对话框与画布",
         10, WTK_FONT_NORMAL, theme->text);

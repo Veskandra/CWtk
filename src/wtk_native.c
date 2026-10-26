@@ -62,6 +62,7 @@ void wtk__native_theme_changed(WtkWidget *widget)
     if (!widget || !wtk__is_field(widget))
         return;
     wtk__native_refresh_brush(widget);
+    wtk__native_position(widget);
     if (widget->input)
         InvalidateRect(widget->input, NULL, TRUE);
     wtk__invalidate(widget);
@@ -114,7 +115,10 @@ static void draw_placeholder(WtkWidget *widget, HDC dc)
 
     old_font = (HFONT)SelectObject(dc, widget->font);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, wtk__colorref(widget->app->theme.muted));
+    SetTextColor(dc, wtk__colorref(
+                         wtk__style_is_native(widget)
+                             ? wtk__system_color(COLOR_GRAYTEXT)
+                             : widget->app->theme.muted));
     if (!GetTextMetricsW(dc, &tm))
         tm.tmHeight = 16;
     line_height = tm.tmHeight;
@@ -275,7 +279,12 @@ void wtk__native_position(WtkWidget *widget)
     if (height < 0)
         height = 0;
 
-    if (widget->type == WTK_TYPE_ENTRY) {
+    if (wtk__style_is_native(widget)) {
+        inset_x = wtk__scale_widget(widget, 2);
+        inset_y = wtk__scale_widget(widget, 2);
+        if (widget->type == WTK_TYPE_ENTRY)
+            inset_y = wtk__scale_widget(widget, 2);
+    } else if (widget->type == WTK_TYPE_ENTRY) {
         inset_x = wtk__scale_widget(widget, 7);
         inset_y = wtk__scale_widget(widget, 3);
     } else {
@@ -292,10 +301,12 @@ void wtk__native_position(WtkWidget *widget)
                  SWP_NOZORDER | SWP_NOACTIVATE);
     if (widget->type == WTK_TYPE_ENTRY ||
         widget->type == WTK_TYPE_TEXT) {
+        int margin = wtk__style_is_native(widget)
+                         ? wtk__scale_widget(widget, 3)
+                         : wtk__scale_widget(widget, 5);
         SendMessageW(widget->input, EM_SETMARGINS,
                      EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                     MAKELPARAM(wtk__scale_widget(widget, 5),
-                                wtk__scale_widget(widget, 5)));
+                     MAKELPARAM(margin, margin));
     }
 }
 

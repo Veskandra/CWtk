@@ -153,14 +153,54 @@ WtkWidget *wtk__toplevel(WtkWidget *widget)
     return widget;
 }
 
+int wtk__style_is_native(WtkWidget *widget)
+{
+    return widget && widget->app &&
+           widget->app->style_resolved == WTK_STYLE_NATIVE;
+}
+
+WtkColor wtk__system_color(int index)
+{
+    COLORREF color = GetSysColor(index);
+    return WTK_RGB(GetRValue(color), GetGValue(color), GetBValue(color));
+}
+
+HTHEME wtk__theme_button(WtkWidget *widget)
+{
+    return widget && widget->app ? widget->app->theme_button : NULL;
+}
+
+HTHEME wtk__theme_edit(WtkWidget *widget)
+{
+    return widget && widget->app ? widget->app->theme_edit : NULL;
+}
+
+HTHEME wtk__theme_listbox(WtkWidget *widget)
+{
+    return widget && widget->app ? widget->app->theme_listbox : NULL;
+}
+
+HTHEME wtk__theme_trackbar(WtkWidget *widget)
+{
+    return widget && widget->app ? widget->app->theme_trackbar : NULL;
+}
+
+HTHEME wtk__theme_progress(WtkWidget *widget)
+{
+    return widget && widget->app ? widget->app->theme_progress : NULL;
+}
+
 WtkColor wtk__container_bg(WtkWidget *container)
 {
     if (!container)
         return WTK_RGB(245, 246, 250);
     if (container->bg_set)
         return container->bg;
-    if (!container->parent)
+    if (!container->parent) {
+        if (wtk__style_is_native(container))
+            return wtk__system_color(COLOR_WINDOW);
         return container->app->theme.window_bg;
+    }
     return wtk__container_bg(container->parent);
 }
 
@@ -170,8 +210,11 @@ WtkColor wtk__widget_bg(WtkWidget *widget)
         return WTK_RGB(245, 246, 250);
     if (widget->bg_set)
         return widget->bg;
-    if (!widget->parent)
+    if (!widget->parent) {
+        if (wtk__style_is_native(widget))
+            return wtk__system_color(COLOR_WINDOW);
         return widget->app->theme.window_bg;
+    }
     return wtk__container_bg(widget->parent);
 }
 
@@ -181,6 +224,11 @@ WtkColor wtk__field_bg(WtkWidget *widget)
         return WTK_WHITE;
     if (widget->bg_set)
         return widget->bg;
+    if (wtk__style_is_native(widget)) {
+        if (!widget->enabled)
+            return wtk__system_color(COLOR_3DFACE);
+        return wtk__system_color(COLOR_WINDOW);
+    }
     if (!widget->enabled || widget->readonly)
         return widget->app->theme.surface_alt;
     return widget->app->theme.surface;
@@ -192,6 +240,11 @@ WtkColor wtk__field_fg(WtkWidget *widget)
         return WTK_BLACK;
     if (widget->fg_set)
         return widget->fg;
+    if (wtk__style_is_native(widget)) {
+        if (!widget->enabled)
+            return wtk__system_color(COLOR_GRAYTEXT);
+        return wtk__system_color(COLOR_WINDOWTEXT);
+    }
     if (!widget->enabled)
         return widget->app->theme.muted;
     return widget->app->theme.text;
@@ -441,6 +494,86 @@ static const WCHAR *choose_ui_font_family(void)
     return L"Segoe UI";
 }
 
+static WtkStyle style_from_environment(void)
+{
+    WCHAR value[32];
+    DWORD length;
+    int i;
+
+    length = GetEnvironmentVariableW(L"WINTK_STYLE", value, 32);
+    if (length == 0 || length >= 32)
+        return WTK_STYLE_AUTO;
+    for (i = 0; value[i]; ++i) {
+        if (value[i] >= L'A' && value[i] <= L'Z')
+            value[i] = (WCHAR)(value[i] - L'A' + L'a');
+    }
+    if (wcscmp(value, L"wintk") == 0 || wcscmp(value, L"custom") == 0 ||
+        wcscmp(value, L"classic") == 0)
+        return WTK_STYLE_WINTK;
+    if (wcscmp(value, L"native") == 0 || wcscmp(value, L"system") == 0)
+        return WTK_STYLE_NATIVE;
+    return WTK_STYLE_AUTO;
+}
+
+static WtkStyle resolve_style(WtkStyle requested)
+{
+    /* AUTO means the native Windows presentation. The fallback path in the
+     * painter uses classic Win32 colors if UxTheme is unavailable. */
+    if (requested == WTK_STYLE_AUTO)
+        return WTK_STYLE_NATIVE;
+    return requested;
+}
+
+static void open_theme_handles(WtkApp *app)
+{
+    if (!app || !app->message_hwnd)
+        return;
+    app->theme_button = OpenThemeData(app->message_hwnd, L"BUTTON");
+    app->theme_edit = OpenThemeData(app->message_hwnd, L"EDIT");
+    app->theme_listbox = OpenThemeData(app->message_hwnd, L"LISTBOX");
+    app->theme_trackbar = OpenThemeData(app->message_hwnd, L"TRACKBAR");
+    app->theme_progress = OpenThemeData(app->message_hwnd, L"PROGRESS");
+}
+
+static void close_theme_handles(WtkApp *app)
+{
+    if (!app)
+        return;
+    if (app->theme_button)
+        CloseThemeData(app->theme_button);
+    if (app->theme_edit)
+        CloseThemeData(app->theme_edit);
+    if (app->theme_listbox)
+        CloseThemeData(app->theme_listbox);
+    if (app->theme_trackbar)
+        CloseThemeData(app->theme_trackbar);
+    if (app->theme_progress)
+        CloseThemeData(app->theme_progress);
+    app->theme_button = NULL;
+    app->theme_edit = NULL;
+    app->theme_listbox = NULL;
+    app->theme_trackbar = NULL;
+    app->theme_progress = NULL;
+}
+
+static void refresh_style_tree(WtkWidget *widget)
+{
+    int i;
+    if (!widget)
+        return;
+    if (wtk__is_field(widget)) {
+        wtk__native_theme_changed(widget);
+        wtk__native_position(widget);
+    }
+    if (widget->type == WTK_TYPE_BUTTON && !widget->cursor_set)
+        widget->cursor = wtk__style_is_native(widget)
+                             ? WTK_CURSOR_ARROW
+                             : WTK_CURSOR_HAND;
+    wtk__invalidate(widget);
+    for (i = 0; i < widget->child_count; ++i)
+        refresh_style_tree(widget->children[i]);
+}
+
 WtkApp *wtk_app_new(void)
 {
     WtkApp *app;
@@ -468,6 +601,8 @@ WtkApp *wtk_app_new(void)
     app->dpi = dpi;
     app->next_menu_id = 1000;
     app->next_timer_id = 1;
+    app->style_requested = style_from_environment();
+    app->style_resolved = resolve_style(app->style_requested);
     wtk_theme_default(&app->theme);
     wcsncpy(app->ui_font_family, choose_ui_font_family(),
             LF_FACESIZE - 1);
@@ -501,6 +636,7 @@ WtkApp *wtk_app_new(void)
         free(app);
         return NULL;
     }
+    open_theme_handles(app);
 
     return app;
 }
@@ -520,6 +656,7 @@ void wtk_app_free(WtkApp *app)
     app->timers = NULL;
     app->timer_count = 0;
 
+    close_theme_handles(app);
     if (app->message_hwnd) {
         DestroyWindow(app->message_hwnd);
         app->message_hwnd = NULL;
@@ -573,6 +710,51 @@ void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme)
 const WtkTheme *wtk_app_get_theme(WtkApp *app)
 {
     return app ? &app->theme : NULL;
+}
+
+void wtk_app_set_style(WtkApp *app, WtkStyle style)
+{
+    int i;
+    if (!app)
+        return;
+    if (style != WTK_STYLE_AUTO && style != WTK_STYLE_NATIVE &&
+        style != WTK_STYLE_WINTK)
+        style = WTK_STYLE_AUTO;
+    app->style_requested = style;
+    app->style_resolved = resolve_style(style);
+
+    for (i = 0; i < app->window_count; ++i) {
+        WtkWidget *window = app->windows[i];
+        if (!window->hwnd)
+            continue;
+        refresh_style_tree(window);
+        wtk__layout_window(window);
+        RedrawWindow(window->hwnd, NULL, NULL,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
+}
+
+WtkStyle wtk_app_get_style(WtkApp *app)
+{
+    return app ? app->style_requested : WTK_STYLE_AUTO;
+}
+
+WtkStyle wtk_app_resolved_style(WtkApp *app)
+{
+    return app ? app->style_resolved : WTK_STYLE_NATIVE;
+}
+
+const char *wtk_style_name(WtkStyle style)
+{
+    switch (style) {
+    case WTK_STYLE_NATIVE:
+        return "Native";
+    case WTK_STYLE_WINTK:
+        return "WinTk";
+    case WTK_STYLE_AUTO:
+    default:
+        return "Auto";
+    }
 }
 
 const char *wtk_app_ui_font_family(WtkApp *app)

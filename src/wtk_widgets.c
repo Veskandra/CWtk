@@ -51,6 +51,7 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
     widget->visible = 1;
     widget->enabled = 1;
     widget->resizable = 1;
+    widget->focus_ring = 1;
     widget->layout_mode = WTK_LAYOUT_NONE;
     widget->pack_side = WTK_SIDE_TOP;
     widget->grid_rowspan = 1;
@@ -71,7 +72,9 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
     switch (type) {
     case WTK_TYPE_BUTTON:
         widget->focusable = 1;
-        widget->cursor = WTK_CURSOR_HAND;
+        widget->cursor = (app && app->style_resolved == WTK_STYLE_NATIVE)
+                             ? WTK_CURSOR_ARROW
+                             : WTK_CURSOR_HAND;
         widget->align = WTK_ALIGN_CENTER;
         widget->pad_l = wtk__logical(app, 20);
         widget->pad_r = wtk__logical(app, 20);
@@ -80,6 +83,9 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
         break;
     case WTK_TYPE_ENTRY:
     case WTK_TYPE_TEXT:
+        widget->focusable = 1;
+        widget->cursor = WTK_CURSOR_IBEAM;
+        break;
     case WTK_TYPE_LISTBOX:
     case WTK_TYPE_CHECKBOX:
     case WTK_TYPE_RADIO:
@@ -334,6 +340,14 @@ static HCURSOR cursor_handle(WtkCursor cursor)
         return LoadCursorW(NULL, IDC_SIZEWE);
     case WTK_CURSOR_SIZE_V:
         return LoadCursorW(NULL, IDC_SIZENS);
+    case WTK_CURSOR_SIZE_ALL:
+        return LoadCursorW(NULL, IDC_SIZEALL);
+    case WTK_CURSOR_SIZE_NWSE:
+        return LoadCursorW(NULL, IDC_SIZENWSE);
+    case WTK_CURSOR_SIZE_NESW:
+        return LoadCursorW(NULL, IDC_SIZENESW);
+    case WTK_CURSOR_NO:
+        return LoadCursorW(NULL, IDC_NO);
     default:
         return LoadCursorW(NULL, IDC_ARROW);
     }
@@ -994,9 +1008,18 @@ void wtk_widget_set_cursor(WtkWidget *widget, WtkCursor cursor)
     if (!widget)
         return;
     widget->cursor = cursor;
+    widget->cursor_set = 1;
     if (widget->hwnd)
         SendMessageW(widget->hwnd, WM_SETCURSOR,
                      (WPARAM)widget->hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+}
+
+void wtk_widget_set_focus_ring(WtkWidget *widget, int enabled)
+{
+    if (!widget)
+        return;
+    widget->focus_ring = !!enabled;
+    wtk__invalidate(widget);
 }
 
 void wtk_widget_focus(WtkWidget *widget)

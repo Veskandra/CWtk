@@ -39,6 +39,7 @@ typedef struct WtkMenu WtkMenu;
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "uxtheme.lib")
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -108,8 +109,24 @@ typedef enum WtkCursor {
     WTK_CURSOR_IBEAM,
     WTK_CURSOR_CROSS,
     WTK_CURSOR_SIZE_H,
-    WTK_CURSOR_SIZE_V
+    WTK_CURSOR_SIZE_V,
+    WTK_CURSOR_SIZE_ALL,
+    WTK_CURSOR_SIZE_NWSE,
+    WTK_CURSOR_SIZE_NESW,
+    WTK_CURSOR_NO
 } WtkCursor;
+
+/* Visual style of the built-in widgets.
+ *
+ * AUTO (the default) follows the native Windows presentation: system colors,
+ * system font and UxTheme-drawn controls. WINTK is the original custom look.
+ * The environment variable WINTK_STYLE can be set to auto, native or wintk
+ * before creating the app to choose a default without changing code. */
+typedef enum WtkStyle {
+    WTK_STYLE_AUTO = 0,
+    WTK_STYLE_NATIVE,
+    WTK_STYLE_WINTK
+} WtkStyle;
 
 typedef enum WtkIcon {
     WTK_ICON_NONE = 0,
@@ -222,6 +239,12 @@ void wtk_quit(WtkApp *app);
 int wtk_app_dpi(WtkApp *app);
 int wtk_scale(WtkApp *app, int logical_pixels);
 
+/* Requested and resolved visual style. AUTO resolves to NATIVE on Windows. */
+void wtk_app_set_style(WtkApp *app, WtkStyle style);
+WtkStyle wtk_app_get_style(WtkApp *app);
+WtkStyle wtk_app_resolved_style(WtkApp *app);
+const char *wtk_style_name(WtkStyle style);
+
 /* Locale-aware default UI font family selected by WinTk (for example
  * "Microsoft YaHei UI" on Simplified Chinese Windows or "Segoe UI" when no
  * CJK UI font is needed). The returned UTF-8 string is owned by the app.
@@ -301,6 +324,8 @@ void wtk_widget_set_border(WtkWidget *widget, WtkColor color, int width,
 void wtk_widget_set_visible(WtkWidget *widget, int visible);
 void wtk_widget_set_enabled(WtkWidget *widget, int enabled);
 void wtk_widget_set_cursor(WtkWidget *widget, WtkCursor cursor);
+/* Hide the accent focus outline for custom widgets such as splitters. */
+void wtk_widget_set_focus_ring(WtkWidget *widget, int enabled);
 void wtk_widget_focus(WtkWidget *widget);
 void wtk_widget_redraw(WtkWidget *widget);
 void wtk_widget_destroy(WtkWidget *widget);

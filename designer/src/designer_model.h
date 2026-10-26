@@ -45,6 +45,7 @@ typedef struct DesignDoc {
     int page_w;
     int page_h;
     int count;
+    int style; /* 0 = auto/native default, 1 = native, 2 = WinTk */
     DesignItem items[DESIGN_MAX_ITEMS];
 } DesignDoc;
 

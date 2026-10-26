@@ -18,7 +18,9 @@
   - `pack`：支持 side、fill、expand、外部 padding。
   - `grid`：支持 row/column span、sticky、列/行权重与最小尺寸。
   - `place`：绝对坐标 + 固定尺寸，供可视化设计器和像素级表单使用。
-- **可视化设计器**：随仓库附带 `WinTk Designer`，可拖拽控件、在画布上移动缩放、编辑属性、实时预览并导出完整 C 源码。
+- **原生 Windows 风格默认**：通过 Win32 系统字体/颜色与 UxTheme 绘制按钮、复选框、滑块和进度条；原生 EDIT/LISTBOX 保持系统边框。原始 WinTk 自绘风格仍是一键可选的 `WTK_STYLE_WINTK`。
+- **可选择的视觉风格**：`WTK_STYLE_AUTO`（默认，Windows 上解析为原生）、`WTK_STYLE_NATIVE` 和 `WTK_STYLE_WINTK`；支持 `WINTK_STYLE` 环境变量自动配置。
+- **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
 - **统一事件模型**：CLICK、CHANGE、SUBMIT、FOCUS、鼠标、滚轮、键盘、RESIZE、CLOSE。
 - **键盘可用**：Tab / Shift+Tab 焦点循环、按钮 Enter/Space 激活、方向键操作滑块和单选组、Ctrl+Enter 提交多行文本。
 - **原生输入控件**：编辑框、多行文本和列表框基于 Win32 原生控件，同时拥有圆角宿主边框、焦点状态、占位符和统一配色。
@@ -48,7 +50,7 @@ mingw32-make
 build\libwintk.a
 build\hello.exe
 build\wintk_gallery.exe
-build\wintk_designer.exe
+designer\build\wintk_designer.exe
 ```
 
 运行完整演示：
@@ -57,10 +59,11 @@ build\wintk_designer.exe
 build\wintk_gallery.exe
 ```
 
-运行可视化页面设计器：
+运行可视化页面设计器（设计器是独立子项目，也可以单独构建）：
 
 ```bat
-build\wintk_designer.exe
+mingw32-make -C designer
+designer\build\wintk_designer.exe
 ```
 
 也可以双击 `build.bat`（内部会调用 `mingw32-make` 或 `make`）。
@@ -119,7 +122,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
 gcc -std=c11 -DUNICODE -D_UNICODE -Iinclude ^
     -finput-charset=UTF-8 -fexec-charset=UTF-8 ^
     app.c build\libwintk.a build\wintk-res.o ^
-    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32
+    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
 ```
 
 如果源码中包含中文字符串，请保留 UTF-8 编译参数；MSVC 使用 `/utf-8`。
@@ -130,14 +133,16 @@ gcc -std=c11 -DUNICODE -D_UNICODE -Iinclude ^
 
 ![WinTk Designer](docs/designer.png)
 
-`wintk_designer.exe` 是一个用 WinTk 自身实现的轻量页面设计器：
+`designer/` 是一个独立子项目，也是一个用 WinTk 自身实现的轻量页面设计器：
 
 - 左侧控件库包含标签、按钮、输入框、多行文本、复选框、列表框、滑块、进度条、分隔线、面板和画布，共 11 种。
 - 将控件拖到页面，或单击控件库快速添加；在页面上拖动移动，拖动 8 个边角手柄缩放；默认 8 像素网格吸附。
+- 左侧控件库、右侧属性面板和底部代码面板都带有可拖动的分隔条。
+- 悬停控件、选中框和分隔条时会切换为对应的移动/缩放光标；属性输入框和代码区显示文本 I 型光标。
 - 右侧属性面板可编辑变量名、文本、X/Y/宽/高、字号、粗体，以及复选框选中态和主按钮样式。
-- 选中控件后按 `Delete` 删除，方向键微调位置，`Shift+方向键` 按网格移动；单击页面空白处编辑页面标题和尺寸。
-- “预览”用真实 WinTk 控件打开一个独立窗口，所见即所得。
-- 底部实时显示生成的 C 代码；“导出 C...”写出一个完整、可直接编译的单文件程序。
+- 选中控件后按 `Delete` 删除，方向键微调位置，`Shift+方向键` 按网格移动；`Ctrl+Z` / `Ctrl+Y` 撤销/重做。
+- 顶部“风格”菜单可在自动、原生 Windows 和 WinTk 自定义之间即时切换。
+- “预览”用真实 WinTk 控件打开独立窗口；底部实时显示生成的 C 代码，“导出 C...”写出完整单文件程序。
 - 页面使用绝对布局，因此生成代码会调用 `wtk_place`；控件事件仍然由开发者在导出后通过 `wtk_bind` 添加。
 
 生成代码的核心结构：
@@ -149,9 +154,24 @@ wtk_button_set_style(button1, WTK_BUTTON_PRIMARY);
 wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 ```
 
-生成文件包含 `build_page()` 和完整的 `WinMain()`。编译时使用与其他示例相同的 UTF-8 参数即可。
+生成文件包含 `build_page()` 和完整的 `WinMain()`，并保留设计器中选择的视觉风格。编译时链接 `user32`、`gdi32`、`comctl32`、`uxtheme`，并带 UTF-8 参数。
 
-这个设计器刻意保持轻量：没有撤销栈、独立工程文件、单选组和嵌套容器；它的定位是快速搭出页面骨架，然后让开发者继续在 C 代码里补业务逻辑和事件。
+设计器子项目可以单独构建：
+
+```bat
+mingw32-make -C designer
+designer\build\wintk_designer.exe
+```
+
+```bat
+cmake -S designer -B designer\build-cmake -G "MinGW Makefiles"
+cmake --build designer\build-cmake -j
+designer\build-cmake\bin\wintk_designer.exe
+```
+
+更多说明见 [designer/README.md](designer/README.md)。
+
+设计器目前没有独立工程文件保存/打开、单选组和嵌套容器；它的定位是快速搭出页面骨架，然后让开发者继续在 C 代码里补业务逻辑和事件。
 
 ## 项目结构
 
@@ -165,8 +185,9 @@ src/wtk_layout.c       pack / grid / place 测量与布局
 src/wtk_draw.c         所有自绘控件与主题绘制
 examples/hello.c       小例子
 examples/gallery.c     完整中文演示（分页、表单、Canvas、主题）
-examples/designer.c    WinTk Designer 界面、画布、属性面板与预览
-examples/designer_model.c/.h  设计文档模型与 C 代码生成器
+designer/              独立可视化设计器子项目
+designer/src/designer.c       界面、画布、分隔条、属性面板与预览
+designer/src/designer_model.c/.h  设计文档模型与 C 代码生成器
 resources/             manifest、图标
 docs/API.md            详细 API 参考
 docs/designer.png      WinTk Designer 截图
@@ -228,6 +249,36 @@ wtk_place(widget, 40, 36, 320, 44);
 - 鼠标事件坐标、Canvas 的绘制尺寸使用 **设备像素**。
 - 字体大小是磅值（point size）。
 - 进程使用系统 DPI 感知；改变显示器或动态切换 DPI 后不会重建控件。
+
+### 视觉风格
+
+WinTk 有两套内置视觉风格，并默认使用原生 Windows 风格：
+
+```c
+WtkApp *app = wtk_app_new();          /* 默认 WTK_STYLE_AUTO -> 原生 */
+wtk_app_set_style(app, WTK_STYLE_WINTK); /* 切回原有自绘风格 */
+```
+
+| 风格 | 说明 |
+|---|---|
+| `WTK_STYLE_AUTO` | 默认；Windows 上解析为原生风格 |
+| `WTK_STYLE_NATIVE` | 系统颜色、UxTheme 按钮/复选框/滑块/进度条和原生输入控件 |
+| `WTK_STYLE_WINTK` | 原来的圆角、主题色自绘风格 |
+
+- 切换会立即重绘现有控件，也可在创建窗口后调用。
+- 原生风格下，PRIMARY / DANGER 按钮仍保留强调色和危险色语义；`WtkTheme` 的多数颜色只在 WinTk 风格生效，显式设置的控件颜色仍会保留。
+- 原生 EDIT / LISTBOX 始终由 Windows 绘制；原生风格同时使用系统窗口颜色和原生边框。
+- 启动前也可以用环境变量自动配置首选项：
+
+```bat
+set WINTK_STYLE=native
+rem 或 wintk / auto
+```
+
+- `wtk_app_get_style()` 返回请求值，`wtk_app_resolved_style()` 返回实际值，`wtk_style_name()` 返回英文名称。
+- 原生绘制依赖 `uxtheme`；链接 WinTk 时请加入 `-luxtheme`。当 UxTheme 不可用时自动退化为经典 Win32 颜色/边框。
+
+原生风格与旧 WinTk 风格可以运行时切换：[WinTk 自定义风格截图](docs/gallery-wintk.png)。Gallery 和 Designer 顶部都有“风格”入口。
 
 ### 中文、Unicode 与输入法
 
@@ -392,7 +443,8 @@ WinTk 不是 Tk 的绑定，也没有实现完整的 Tk 几何算法、anchor、
 - 没有 anchor 配置；pack 交叉轴默认靠左/靠上，grid 未设置 sticky 时默认居中。
 - `place` 不会随父容器重排；缩放窗口时固定坐标表单不会自适应。
 - 没有自动滚动条，也没有控件虚拟化；内容超出窗口时会被裁剪。
-- WinTk Designer 是轻量版：没有撤销、独立工程文件、单选组和嵌套容器；生成代码后需要继续手写事件。
+- WinTk Designer 是轻量版：没有独立工程文件、单选组和嵌套容器；生成代码后需要继续手写事件。
+- 原生风格是 Win32/UxTheme 风格绘制，不是把每个按钮都替换成独立的原生 BUTTON 子窗口；原生 EDIT 和 LISTBOX 仍是真实系统控件。
 - 系统 DPI 感知，不支持跨显示器动态重建字体和布局。
 - 默认 UI 字体会随 Windows 界面语言变化；如果需要跨语言完全一致的字形，请显式设置字体。
 - 中文输入依赖原生 EDIT；自绘控件本身不是文本输入控件。
@@ -406,8 +458,9 @@ WinTk 不是 Tk 的绑定，也没有实现完整的 Tk 几何算法、anchor、
 - [API 参考](docs/API.md)
 - [Hello 示例](examples/hello.c)
 - [完整 Gallery](examples/gallery.c)
-- [WinTk Designer 界面](examples/designer.c)
-- [设计文档模型与 C 代码生成器](examples/designer_model.c)
+- [WinTk Designer 子项目](designer/README.md)
+- [设计器界面](designer/src/designer.c)
+- [设计文档模型与 C 代码生成器](designer/src/designer_model.c)
 
 ## License
 

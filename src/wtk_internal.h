@@ -11,6 +11,7 @@
 #include "wintk.h"
 
 #include <commctrl.h>
+#include <uxtheme.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -83,6 +84,14 @@ struct WtkApp {
     HWND message_hwnd;
     WCHAR ui_font_family[LF_FACESIZE];
     char *ui_font_family_utf8;
+
+    WtkStyle style_requested;
+    WtkStyle style_resolved;
+    HTHEME theme_button;
+    HTHEME theme_edit;
+    HTHEME theme_listbox;
+    HTHEME theme_trackbar;
+    HTHEME theme_progress;
 
     WtkWidget **windows;
     int window_count;
@@ -193,6 +202,8 @@ struct WtkWidget {
     int focused;
     int focusable;
     int tracking_mouse;
+    int focus_ring;
+    int cursor_set;
     WtkCursor cursor;
 
     WtkButtonStyle button_style;
@@ -242,6 +253,13 @@ COLORREF wtk__colorref(WtkColor color);
 WtkColor wtk__shade(WtkColor color, int percent);
 int wtk__logical(WtkApp *app, int pixels);
 int wtk__scale_widget(WtkWidget *widget, int pixels);
+int wtk__style_is_native(WtkWidget *widget);
+WtkColor wtk__system_color(int index);
+HTHEME wtk__theme_button(WtkWidget *widget);
+HTHEME wtk__theme_edit(WtkWidget *widget);
+HTHEME wtk__theme_listbox(WtkWidget *widget);
+HTHEME wtk__theme_trackbar(WtkWidget *widget);
+HTHEME wtk__theme_progress(WtkWidget *widget);
 
 WtkColor wtk__container_bg(WtkWidget *container);
 WtkColor wtk__widget_bg(WtkWidget *widget);

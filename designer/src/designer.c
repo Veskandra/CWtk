@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <uxtheme.h>
+#include <vssym32.h>
+#include <vsstyle.h>
 
 #define DESIGNER_WINDOW_W 1440
 #define DESIGNER_WINDOW_H 900
@@ -42,9 +45,26 @@ typedef struct DrawContext {
     HDC dc;
     const WtkTheme *theme;
     double scale;
+    int native;
     PreviewFont fonts[24];
     int font_count;
 } DrawContext;
+
+typedef enum SplitterKind {
+    SPLIT_LEFT = 0,
+    SPLIT_RIGHT,
+    SPLIT_BOTTOM
+} SplitterKind;
+
+typedef struct SplitterData {
+    Designer *designer;
+    SplitterKind kind;
+    int active;
+    int hover;
+    int start_x;
+    int start_y;
+    int start_size;
+} SplitterData;
 
 struct Designer {
     WtkApp *app;
@@ -54,6 +74,20 @@ struct Designer {
     WtkWidget *code_view;
     WtkWidget *status_label;
     WtkWidget *page_caption;
+
+    WtkWidget *palette_card;
+    WtkWidget *inspector_card;
+    WtkWidget *center_card;
+    WtkWidget *code_card;
+    WtkWidget *left_split;
+    WtkWidget *right_split;
+    WtkWidget *bottom_split;
+    SplitterData split_left;
+    SplitterData split_right;
+    SplitterData split_bottom;
+    int palette_w;
+    int inspector_w;
+    int code_h;
 
     WtkWidget *type_value;
     WtkWidget *name_entry;
@@ -72,9 +106,26 @@ struct Designer {
     WtkWidget *clear_button;
     WtkWidget *preview_button;
     WtkWidget *export_button;
+    WtkWidget *style_button;
+    WtkWidget *undo_button;
+    WtkWidget *redo_button;
+
+    HTHEME theme_button;
+    HTHEME theme_edit;
+    HTHEME theme_trackbar;
+    HTHEME theme_progress;
 
     DesignDoc doc;
     int selected;
+    int snap_enabled;
+
+    DesignDoc *undo;
+    int undo_count;
+    int undo_cap;
+    DesignDoc *redo;
+    int redo_count;
+    int redo_cap;
+    int action_undo_pushed;
 
     WCHAR font_family[LF_FACESIZE];
 
@@ -87,6 +138,9 @@ struct Designer {
     int palette_dragging;
     DesignKind palette_kind;
     POINT palette_start;
+    WtkCursor palette_cursor;
+
+    WtkCursor canvas_cursor;
 
     int drop_active;
     DesignKind drop_kind;
@@ -396,26 +450,80 @@ static int sc(Designer *designer, int logical)
     return iround((double)logical * designer->view_scale);
 }
 
+static WtkColor sys_color(int index)
+{
+    COLORREF color = GetSysColor(index);
+    return WTK_RGB(GetRValue(color), GetGValue(color), GetBValue(color));
+}
+
+static int theme_draw(DrawContext *ctx, HTHEME theme, int part, int state,
+                      const RECT *rect)
+{
+    if (!ctx->native || !theme || !rect)
+        return 0;
+    return SUCCEEDED(
+        DrawThemeBackground(theme, ctx->dc, part, state, rect, NULL));
+}
+
+static int theme_size(DrawContext *ctx, HTHEME theme, int part, int state,
+                      SIZE *size)
+{
+    if (!ctx->native || !theme || !size)
+        return 0;
+    memset(size, 0, sizeof(*size));
+    if (FAILED(GetThemePartSize(theme, ctx->dc, part, state, NULL, TS_TRUE,
+                                size)))
+        return 0;
+    return size->cx > 0 && size->cy > 0;
+}
+
 static void draw_preview_label(DrawContext *ctx, const DesignItem *item,
                                RECT rect)
 {
     RECT text = rect;
+    WtkColor color = ctx->native ? sys_color(COLOR_WINDOWTEXT)
+                                 : ctx->theme->text;
     text.left += sc(ctx->designer, 2);
     text.right -= sc(ctx->designer, 2);
-    draw_text_utf8(ctx, item->text, text, ctx->theme->text, item->font_size,
-                   item->bold,
+    draw_text_utf8(ctx, item->text, text, color, item->font_size, item->bold,
                    DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
 }
 
 static void draw_preview_button(DrawContext *ctx, const DesignItem *item,
                                 RECT rect)
 {
-    WtkColor fill = item->primary ? ctx->theme->accent : ctx->theme->surface;
-    WtkColor border =
-        item->primary ? ctx->theme->accent : ctx->theme->border;
-    WtkColor text = item->primary ? ctx->theme->on_accent : ctx->theme->text;
-    int radius = sc(ctx->designer, 8);
+    WtkColor fill;
+    WtkColor border;
+    WtkColor text;
+    int radius = sc(ctx->designer, ctx->native ? 4 : 8);
     RECT label = rect;
+
+    if (ctx->native) {
+        label.left += sc(ctx->designer, 10);
+        label.right -= sc(ctx->designer, 10);
+        if (item->primary) {
+            fill = sys_color(COLOR_HIGHLIGHT);
+            text = sys_color(COLOR_HIGHLIGHTTEXT);
+            round_rect_color(ctx->dc, rect, radius, fill, fill, 0);
+        } else {
+            if (!theme_draw(ctx, ctx->designer->theme_button, BP_PUSHBUTTON,
+                            PBS_NORMAL, &rect)) {
+                fill = sys_color(COLOR_BTNFACE);
+                border = sys_color(COLOR_3DSHADOW);
+                round_rect_color(ctx->dc, rect, 0, fill, border, 1);
+            }
+            text = sys_color(COLOR_BTNTEXT);
+        }
+        draw_text_utf8(ctx, item->text, label, text, item->font_size,
+                       item->bold,
+                       DT_SINGLELINE | DT_VCENTER | DT_CENTER |
+                           DT_END_ELLIPSIS);
+        return;
+    }
+
+    fill = item->primary ? ctx->theme->accent : ctx->theme->surface;
+    border = item->primary ? ctx->theme->accent : ctx->theme->border;
+    text = item->primary ? ctx->theme->on_accent : ctx->theme->text;
     label.left += sc(ctx->designer, 10);
     label.right -= sc(ctx->designer, 10);
 
@@ -431,6 +539,23 @@ static void draw_field(DrawContext *ctx, RECT rect)
                      ctx->theme->surface, ctx->theme->border, 1);
 }
 
+static void draw_native_field(DrawContext *ctx, RECT rect, int vertical)
+{
+    int part = vertical ? EP_EDITBORDER_VSCROLL
+                        : EP_EDITBORDER_NOSCROLL;
+    fill_color(ctx->dc, &rect, sys_color(COLOR_WINDOW));
+    if (!theme_draw(ctx, ctx->designer->theme_edit, part, EPSN_NORMAL,
+                    &rect)) {
+        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_3DSHADOW));
+        HGDIOBJ old = SelectObject(ctx->dc, pen);
+        HGDIOBJ old_brush = SelectObject(ctx->dc, GetStockObject(NULL_BRUSH));
+        Rectangle(ctx->dc, rect.left, rect.top, rect.right, rect.bottom);
+        SelectObject(ctx->dc, old_brush);
+        SelectObject(ctx->dc, old);
+        DeleteObject(pen);
+    }
+}
+
 static void draw_preview_entry(DrawContext *ctx, const DesignItem *item,
                                RECT rect)
 {
@@ -439,6 +564,23 @@ static void draw_preview_entry(DrawContext *ctx, const DesignItem *item,
     text.right -= sc(ctx->designer, 10);
     text.top += sc(ctx->designer, 5);
     text.bottom -= sc(ctx->designer, 5);
+
+    if (ctx->native) {
+        draw_native_field(ctx, rect, 0);
+        if (item->text[0]) {
+            draw_text_utf8(ctx, item->text, text, sys_color(COLOR_WINDOWTEXT),
+                           item->font_size, item->bold,
+                           DT_SINGLELINE | DT_VCENTER | DT_LEFT |
+                               DT_END_ELLIPSIS);
+        } else {
+            draw_text_utf8(ctx, designer_kind_placeholder(DK_ENTRY), text,
+                           sys_color(COLOR_GRAYTEXT), item->font_size,
+                           item->bold,
+                           DT_SINGLELINE | DT_VCENTER | DT_LEFT |
+                               DT_END_ELLIPSIS);
+        }
+        return;
+    }
 
     draw_field(ctx, rect);
     if (item->text[0]) {
@@ -460,16 +602,36 @@ static void draw_preview_text(DrawContext *ctx, const DesignItem *item,
     RECT text = rect;
     RECT rail;
 
-    draw_field(ctx, rect);
     rail = rect;
     rail.left = rail.right - sc(ctx->designer, 9);
     rail.top += 1;
     rail.bottom -= 1;
-    fill_color(ctx->dc, &rail, ctx->theme->surface_alt);
     text.left += sc(ctx->designer, 10);
     text.right -= sc(ctx->designer, 16);
     text.top += sc(ctx->designer, 8);
     text.bottom -= sc(ctx->designer, 8);
+
+    if (ctx->native) {
+        draw_native_field(ctx, rect, 1);
+        fill_color(ctx->dc, &rail, sys_color(COLOR_BTNFACE));
+        if (item->text[0]) {
+            draw_text_utf8(ctx, item->text, text,
+                           sys_color(COLOR_WINDOWTEXT), item->font_size,
+                           item->bold,
+                           DT_LEFT | DT_TOP | DT_WORDBREAK |
+                               DT_EDITCONTROL);
+        } else {
+            draw_text_utf8(ctx, designer_kind_placeholder(DK_TEXT), text,
+                           sys_color(COLOR_GRAYTEXT), item->font_size,
+                           item->bold,
+                           DT_LEFT | DT_TOP | DT_WORDBREAK |
+                               DT_EDITCONTROL);
+        }
+        return;
+    }
+
+    draw_field(ctx, rect);
+    fill_color(ctx->dc, &rail, ctx->theme->surface_alt);
     if (item->text[0]) {
         draw_text_utf8(ctx, item->text, text, ctx->theme->text,
                        item->font_size, item->bold,
@@ -495,6 +657,33 @@ static void draw_preview_checkbox(DrawContext *ctx, const DesignItem *item,
     RECT text = rect;
     WtkColor border = item->checked ? ctx->theme->accent : ctx->theme->border;
     WtkColor fill = item->checked ? ctx->theme->accent : ctx->theme->surface;
+
+    if (ctx->native) {
+        SIZE glyph;
+        int state = item->checked ? CBS_CHECKEDNORMAL
+                                  : CBS_UNCHECKEDNORMAL;
+        if (!theme_size(ctx, ctx->designer->theme_button, BP_CHECKBOX,
+                        state, &glyph)) {
+            glyph.cx = sc(ctx->designer, 13);
+            glyph.cy = sc(ctx->designer, 13);
+        }
+        box.left = rect.left;
+        box.top = rect.top + ((rect.bottom - rect.top) - glyph.cy) / 2;
+        box.right = box.left + glyph.cx;
+        box.bottom = box.top + glyph.cy;
+        if (!theme_draw(ctx, ctx->designer->theme_button, BP_CHECKBOX, state,
+                        &box)) {
+            DrawFrameControl(ctx->dc, &box, DFC_BUTTON,
+                             DFCS_BUTTONCHECK |
+                                 (item->checked ? DFCS_CHECKED : 0));
+        }
+        text.left = box.right + sc(ctx->designer, 7);
+        draw_text_utf8(ctx, item->text, text, sys_color(COLOR_WINDOWTEXT),
+                       item->font_size, item->bold,
+                       DT_SINGLELINE | DT_VCENTER | DT_LEFT |
+                           DT_END_ELLIPSIS);
+        return;
+    }
 
     box.left = rect.left;
     box.top = box_top;
@@ -526,7 +715,10 @@ static void draw_preview_listbox(DrawContext *ctx, const DesignItem *item,
     RECT inner = rect;
     int saved;
 
-    draw_field(ctx, rect);
+    if (ctx->native)
+        draw_native_field(ctx, rect, 1);
+    else
+        draw_field(ctx, rect);
     inner.left += 2;
     inner.right -= 2;
     inner.top += 2;
@@ -543,15 +735,21 @@ static void draw_preview_listbox(DrawContext *ctx, const DesignItem *item,
         if (row.top >= inner.bottom)
             break;
         if (i == 0) {
-            fill_color(ctx->dc, &row, ctx->theme->accent);
+            fill_color(ctx->dc, &row,
+                       ctx->native ? sys_color(COLOR_HIGHLIGHT)
+                                   : ctx->theme->accent);
             row.left += sc(ctx->designer, 8);
-            draw_text_utf8(ctx, items[i], row, ctx->theme->on_accent,
+            draw_text_utf8(ctx, items[i], row,
+                           ctx->native ? sys_color(COLOR_HIGHLIGHTTEXT)
+                                       : ctx->theme->on_accent,
                            item->font_size, item->bold,
                            DT_SINGLELINE | DT_VCENTER | DT_LEFT |
                                DT_END_ELLIPSIS);
         } else {
             row.left += sc(ctx->designer, 8);
-            draw_text_utf8(ctx, items[i], row, ctx->theme->text,
+            draw_text_utf8(ctx, items[i], row,
+                           ctx->native ? sys_color(COLOR_WINDOWTEXT)
+                                       : ctx->theme->text,
                            item->font_size, item->bold,
                            DT_SINGLELINE | DT_VCENTER | DT_LEFT |
                                DT_END_ELLIPSIS);
@@ -572,6 +770,45 @@ static void draw_preview_slider(DrawContext *ctx, const DesignItem *item,
     HBRUSH brush;
     HGDIOBJ old;
     HPEN pen;
+
+    if (ctx->native) {
+        SIZE thumb_size;
+        SIZE track_size;
+        int left;
+        int right;
+        int thumb_x;
+        if (!theme_size(ctx, ctx->designer->theme_trackbar, TKP_THUMBBOTTOM,
+                        TUS_NORMAL, &thumb_size)) {
+            thumb_size.cx = sc(ctx->designer, 11);
+            thumb_size.cy = sc(ctx->designer, 19);
+        }
+        if (!theme_size(ctx, ctx->designer->theme_trackbar, TKP_TRACK,
+                        TRS_NORMAL, &track_size))
+            track_size.cy = sc(ctx->designer, 3);
+        left = rect.left + thumb_size.cx / 2;
+        right = rect.right - thumb_size.cx / 2;
+        thumb_x = left + (right - left) / 2;
+        track.left = left - thumb_size.cx / 2;
+        track.right = right + thumb_size.cx / 2;
+        track.top = cy - track_size.cy / 2;
+        track.bottom = track.top + track_size.cy;
+        if (!theme_draw(ctx, ctx->designer->theme_trackbar, TKP_TRACK,
+                        TRS_NORMAL, &track)) {
+            track.top = cy - 1;
+            track.bottom = cy + 1;
+            fill_color(ctx->dc, &track, sys_color(COLOR_3DSHADOW));
+        }
+        fill.left = thumb_x - thumb_size.cx / 2;
+        fill.top = cy - thumb_size.cy / 2;
+        fill.right = fill.left + thumb_size.cx;
+        fill.bottom = fill.top + thumb_size.cy;
+        if (!theme_draw(ctx, ctx->designer->theme_trackbar,
+                        TKP_THUMBBOTTOM, TUS_NORMAL, &fill)) {
+            fill_color(ctx->dc, &fill, sys_color(COLOR_BTNFACE));
+            DrawEdge(ctx->dc, &fill, EDGE_RAISED, BF_RECT);
+        }
+        return;
+    }
 
     track.left = rect.left;
     track.right = rect.right;
@@ -607,6 +844,18 @@ static void draw_preview_progress(DrawContext *ctx, const DesignItem *item,
                         sc(ctx->designer, 8));
     fill.right = rect.left + (rect.right - rect.left) / 2;
 
+    if (ctx->native) {
+        if (!theme_draw(ctx, ctx->designer->theme_progress, PP_BAR,
+                        PBBS_NORMAL, &rect)) {
+            fill_color(ctx->dc, &rect, sys_color(COLOR_3DFACE));
+            DrawEdge(ctx->dc, &rect, EDGE_SUNKEN, BF_RECT);
+        }
+        if (!theme_draw(ctx, ctx->designer->theme_progress, PP_CHUNK,
+                        PBBS_NORMAL, &fill))
+            fill_color(ctx->dc, &fill, sys_color(COLOR_HIGHLIGHT));
+        return;
+    }
+
     round_rect_color(ctx->dc, rect, radius, ctx->theme->surface_alt,
                      ctx->theme->surface_alt, 0);
     round_rect_color(ctx->dc, fill, radius, ctx->theme->accent,
@@ -617,7 +866,10 @@ static void draw_preview_progress(DrawContext *ctx, const DesignItem *item,
 static void draw_preview_separator(DrawContext *ctx, RECT rect)
 {
     int y = (rect.top + rect.bottom) / 2;
-    line_color(ctx->dc, rect.left, y, rect.right, y, ctx->theme->border, 1);
+    line_color(ctx->dc, rect.left, y, rect.right, y,
+               ctx->native ? sys_color(COLOR_3DSHADOW)
+                           : ctx->theme->border,
+               1);
 }
 
 static void draw_preview_frame(DrawContext *ctx, RECT rect)
@@ -803,6 +1055,8 @@ static void canvas_draw(WtkWidget *canvas, HDC dc, int width, int height,
     ctx.designer = designer;
     ctx.dc = dc;
     ctx.theme = wtk_app_get_theme(designer->app);
+    ctx.native =
+        wtk_app_resolved_style(designer->app) == WTK_STYLE_NATIVE;
     if (!designer_view(designer, &page, &scale))
         return;
     ctx.scale = scale;
@@ -1041,6 +1295,110 @@ static void designer_update_geometry_fields(Designer *designer)
     wtk_label_set_text(designer->type_value, title);
 }
 
+static void designer_update_page_caption(Designer *designer);
+
+static int history_push_copy(DesignDoc **stack, int *count, int *capacity,
+                             const DesignDoc *doc)
+{
+    if (!stack || !count || !capacity || !doc)
+        return 0;
+    if (*count >= 50) {
+        memmove(*stack, *stack + 1, (size_t)(*count - 1) * sizeof(DesignDoc));
+        (*count)--;
+    }
+    if (*count >= *capacity) {
+        int next = *capacity ? *capacity * 2 : 16;
+        DesignDoc *fresh = (DesignDoc *)realloc(
+            *stack, (size_t)next * sizeof(DesignDoc));
+        if (!fresh)
+            return 0;
+        *stack = fresh;
+        *capacity = next;
+    }
+    (*stack)[*count] = *doc;
+    (*count)++;
+    return 1;
+}
+
+static void designer_update_history_buttons(Designer *designer)
+{
+    if (!designer)
+        return;
+    if (designer->undo_button)
+        wtk_widget_set_enabled(designer->undo_button,
+                               designer->undo_count > 0);
+    if (designer->redo_button)
+        wtk_widget_set_enabled(designer->redo_button,
+                               designer->redo_count > 0);
+}
+
+static void designer_push_undo(Designer *designer)
+{
+    if (!designer)
+        return;
+    if (!history_push_copy(&designer->undo, &designer->undo_count,
+                           &designer->undo_cap, &designer->doc))
+        return;
+    designer->redo_count = 0;
+    designer_update_history_buttons(designer);
+}
+
+static void designer_restore_document(Designer *designer,
+                                      const DesignDoc *doc)
+{
+    if (!designer || !doc)
+        return;
+    designer->doc = *doc;
+    designer->doc.style = (int)wtk_app_get_style(designer->app);
+    if (designer->selected < -1 ||
+        designer->selected >= designer->doc.count)
+        designer->selected = -1;
+    designer_sync_properties(designer);
+    designer_update_page_caption(designer);
+    designer_regenerate_code(designer);
+    designer_redraw(designer);
+}
+
+static void designer_undo(Designer *designer)
+{
+    if (!designer || designer->undo_count <= 0)
+        return;
+    history_push_copy(&designer->redo, &designer->redo_count,
+                      &designer->redo_cap, &designer->doc);
+    designer->undo_count--;
+    designer_restore_document(designer,
+                              &designer->undo[designer->undo_count]);
+    designer_update_history_buttons(designer);
+    designer_status(designer, "已撤销");
+}
+
+static void designer_redo(Designer *designer)
+{
+    if (!designer || designer->redo_count <= 0)
+        return;
+    history_push_copy(&designer->undo, &designer->undo_count,
+                      &designer->undo_cap, &designer->doc);
+    designer->redo_count--;
+    designer_restore_document(designer,
+                              &designer->redo[designer->redo_count]);
+    designer_update_history_buttons(designer);
+    designer_status(designer, "已重做");
+}
+
+static void on_undo_click(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    (void)widget;
+    (void)event;
+    designer_undo((Designer *)data);
+}
+
+static void on_redo_click(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    (void)widget;
+    (void)event;
+    designer_redo((Designer *)data);
+}
+
 static void designer_select(Designer *designer, int index)
 {
     if (!designer)
@@ -1078,6 +1436,7 @@ static void designer_add_kind(Designer *designer, DesignKind kind, int x,
     default_h = designer_palette[kind].height;
     x = clampi(x, 0, designer->doc.page_w - default_w);
     y = clampi(y, 0, designer->doc.page_h - default_h);
+    designer_push_undo(designer);
     index = designer_add_item(&designer->doc, kind, x, y);
     if (index < 0)
         return;
@@ -1095,6 +1454,7 @@ static void designer_delete_selected(Designer *designer)
         return;
     snprintf(status, sizeof(status), "已删除 %s",
              designer_kind_name(designer->doc.items[designer->selected].kind));
+    designer_push_undo(designer);
     designer_remove_item(&designer->doc, designer->selected);
     if (designer->selected >= designer->doc.count)
         designer->selected = designer->doc.count - 1;
@@ -1138,6 +1498,7 @@ static void designer_apply_properties(Designer *designer)
         int i;
         if (!title || !title[0])
             title = "未命名页面";
+        designer_push_undo(designer);
         snprintf(designer->doc.title, sizeof(designer->doc.title), "%s",
                  title);
         designer->doc.page_w = new_w;
@@ -1165,6 +1526,7 @@ static void designer_apply_properties(Designer *designer)
 
         has_text = designer_kind_has_text(item->kind);
         has_font = designer_kind_has_font(item->kind);
+        designer_push_undo(designer);
         if (designer->name_entry) {
             snprintf(requested, sizeof(requested), "%s",
                      wtk_entry_get_text(designer->name_entry));
@@ -1248,6 +1610,64 @@ static int handle_hit(Designer *designer, int mx, int my)
     return 0;
 }
 
+static WtkCursor handle_cursor(int handle)
+{
+    int horizontal = (handle & (HANDLE_LEFT | HANDLE_RIGHT)) != 0;
+    int vertical = (handle & (HANDLE_TOP | HANDLE_BOTTOM)) != 0;
+    if (horizontal && vertical) {
+        if ((handle & HANDLE_LEFT) && (handle & HANDLE_TOP))
+            return WTK_CURSOR_SIZE_NWSE;
+        if ((handle & HANDLE_RIGHT) && (handle & HANDLE_BOTTOM))
+            return WTK_CURSOR_SIZE_NWSE;
+        return WTK_CURSOR_SIZE_NESW;
+    }
+    if (horizontal)
+        return WTK_CURSOR_SIZE_H;
+    if (vertical)
+        return WTK_CURSOR_SIZE_V;
+    return WTK_CURSOR_ARROW;
+}
+
+static void set_canvas_cursor(Designer *designer, WtkCursor cursor)
+{
+    if (!designer || designer->canvas_cursor == cursor)
+        return;
+    designer->canvas_cursor = cursor;
+    wtk_widget_set_cursor(designer->canvas, cursor);
+}
+
+static void set_palette_cursor(Designer *designer, WtkCursor cursor)
+{
+    if (!designer || designer->palette_cursor == cursor)
+        return;
+    designer->palette_cursor = cursor;
+    wtk_widget_set_cursor(designer->palette, cursor);
+}
+
+static int item_hit(Designer *designer, int x, int y);
+
+static void update_canvas_cursor(Designer *designer, int mx, int my)
+{
+    int handle;
+    int page_x;
+    int page_y;
+    int hit;
+    if (!designer)
+        return;
+    handle = handle_hit(designer, mx, my);
+    if (handle) {
+        set_canvas_cursor(designer, handle_cursor(handle));
+        return;
+    }
+    if (!designer_event_page(designer, mx, my, &page_x, &page_y)) {
+        set_canvas_cursor(designer, WTK_CURSOR_ARROW);
+        return;
+    }
+    hit = item_hit(designer, page_x, page_y);
+    set_canvas_cursor(designer, hit >= 0 ? WTK_CURSOR_SIZE_ALL
+                                        : WTK_CURSOR_CROSS);
+}
+
 static int item_hit(Designer *designer, int x, int y)
 {
     int i;
@@ -1278,6 +1698,8 @@ static void on_canvas_mouse_down(WtkWidget *widget, WtkEvent *event, void *data)
         designer->action_start_x = event->x;
         designer->action_start_y = event->y;
         designer->action_changed = 0;
+        designer->action_undo_pushed = 0;
+        set_canvas_cursor(designer, handle_cursor(handle));
         SetCapture(wtk_widget_hwnd(designer->canvas));
         return;
     }
@@ -1298,6 +1720,8 @@ static void on_canvas_mouse_down(WtkWidget *widget, WtkEvent *event, void *data)
     designer->action_start_x = event->x;
     designer->action_start_y = event->y;
     designer->action_changed = 0;
+    designer->action_undo_pushed = 0;
+    set_canvas_cursor(designer, WTK_CURSOR_SIZE_ALL);
     SetCapture(wtk_widget_hwnd(designer->canvas));
 }
 
@@ -1317,8 +1741,13 @@ static void on_canvas_mouse_move(WtkWidget *widget, WtkEvent *event, void *data)
     int min_h = 8;
 
     (void)widget;
-    if (!designer || designer->action == ACTION_NONE ||
-        designer->action_index < 0 ||
+    if (!designer)
+        return;
+    if (designer->action == ACTION_NONE) {
+        update_canvas_cursor(designer, event->x, event->y);
+        return;
+    }
+    if (designer->action_index < 0 ||
         designer->action_index >= designer->doc.count)
         return;
 
@@ -1343,6 +1772,10 @@ static void on_canvas_mouse_move(WtkWidget *widget, WtkEvent *event, void *data)
         new_y = clampi(new_y, 0,
                        designer->doc.page_h - designer->action_orig.h);
         if (new_x != item->x || new_y != item->y) {
+            if (!designer->action_undo_pushed) {
+                designer_push_undo(designer);
+                designer->action_undo_pushed = 1;
+            }
             item->x = new_x;
             item->y = new_y;
             designer->action_changed = 1;
@@ -1390,6 +1823,10 @@ static void on_canvas_mouse_move(WtkWidget *widget, WtkEvent *event, void *data)
     }
     if (new_x != item->x || new_y != item->y || new_w != item->w ||
         new_h != item->h) {
+        if (!designer->action_undo_pushed) {
+            designer_push_undo(designer);
+            designer->action_undo_pushed = 1;
+        }
         item->x = new_x;
         item->y = new_y;
         item->w = new_w;
@@ -1412,9 +1849,11 @@ static void on_canvas_mouse_up(WtkWidget *widget, WtkEvent *event, void *data)
     designer->action = ACTION_NONE;
     designer->action_handle = 0;
     designer->action_changed = 0;
+    designer->action_undo_pushed = 0;
     if (GetCapture() == wtk_widget_hwnd(designer->canvas))
         ReleaseCapture();
     designer_sync_properties(designer);
+    update_canvas_cursor(designer, event->x, event->y);
     if (changed) {
         designer_regenerate_code(designer);
         designer_redraw(designer);
@@ -1429,6 +1868,18 @@ static void on_canvas_mouse_up(WtkWidget *widget, WtkEvent *event, void *data)
     }
 }
 
+static void on_canvas_mouse_leave(WtkWidget *widget, WtkEvent *event,
+                                  void *data)
+{
+    Designer *designer = (Designer *)data;
+    (void)widget;
+    (void)event;
+    if (designer && designer->action == ACTION_NONE)
+        set_canvas_cursor(designer, WTK_CURSOR_ARROW);
+}
+
+static void designer_export_code(Designer *designer);
+
 static void on_canvas_key_down(WtkWidget *widget, WtkEvent *event, void *data)
 {
     Designer *designer = (Designer *)data;
@@ -1439,6 +1890,24 @@ static void on_canvas_key_down(WtkWidget *widget, WtkEvent *event, void *data)
     (void)widget;
     if (!designer)
         return;
+    if ((event->modifiers & WTK_MOD_CONTROL) &&
+        (event->key == 'Z' || event->key == 'z')) {
+        if (GetKeyState(VK_SHIFT) & 0x8000)
+            designer_redo(designer);
+        else
+            designer_undo(designer);
+        return;
+    }
+    if ((event->modifiers & WTK_MOD_CONTROL) &&
+        (event->key == 'Y' || event->key == 'y')) {
+        designer_redo(designer);
+        return;
+    }
+    if ((event->modifiers & WTK_MOD_CONTROL) &&
+        (event->key == 'S' || event->key == 's')) {
+        designer_export_code(designer);
+        return;
+    }
     if (event->key == VK_ESCAPE) {
         designer_select(designer, -1);
         return;
@@ -1473,6 +1942,7 @@ static void on_canvas_key_down(WtkWidget *widget, WtkEvent *event, void *data)
         break;
     }
     if (changed) {
+        designer_push_undo(designer);
         designer_clamp_item(designer, item);
         designer_update_geometry_fields(designer);
         designer_regenerate_code(designer);
@@ -1724,6 +2194,7 @@ static void on_palette_mouse_down(WtkWidget *widget, WtkEvent *event,
     designer->palette_pressed = 1;
     designer->palette_dragging = 0;
     designer->palette_kind = (DesignKind)index;
+    set_palette_cursor(designer, WTK_CURSOR_HAND);
     GetCursorPos(&designer->palette_start);
     SetCapture(wtk_widget_hwnd(designer->palette));
     wtk_canvas_redraw(designer->palette);
@@ -1770,8 +2241,10 @@ static void on_palette_mouse_move(WtkWidget *widget, WtkEvent *event,
                 designer->drop_kind = (DesignKind)kind;
                 designer->drop_x = drop_x;
                 designer->drop_y = drop_y;
+                set_palette_cursor(designer, WTK_CURSOR_SIZE_ALL);
             } else {
                 designer->drop_active = 0;
+                set_palette_cursor(designer, WTK_CURSOR_NO);
             }
             if (old_active != designer->drop_active ||
                 old_kind != (int)designer->drop_kind ||
@@ -1817,6 +2290,7 @@ static void on_palette_mouse_up(WtkWidget *widget, WtkEvent *event, void *data)
     designer->palette_pressed = 0;
     designer->palette_dragging = 0;
     designer->drop_active = 0;
+    set_palette_cursor(designer, WTK_CURSOR_HAND);
     if (GetCapture() == wtk_widget_hwnd(designer->palette))
         ReleaseCapture();
     wtk_canvas_redraw(designer->palette);
@@ -1949,7 +2423,10 @@ static void designer_clear_document(Designer *designer)
                         "确定要删除页面中的所有控件吗？")) {
         return;
     }
+    if (designer->doc.count > 0)
+        designer_push_undo(designer);
     designer_document_clear(&designer->doc);
+    designer->doc.style = (int)wtk_app_get_style(designer->app);
     designer->selected = -1;
     designer_sync_properties(designer);
     designer_update_page_caption(designer);
@@ -2033,6 +2510,262 @@ static void on_export_click(WtkWidget *widget, WtkEvent *event, void *data)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Resizable layout splitters                                                */
+/* ------------------------------------------------------------------------- */
+
+static void splitter_draw(WtkWidget *widget, HDC dc, int width, int height,
+                          void *userdata)
+{
+    SplitterData *split = (SplitterData *)userdata;
+    Designer *designer;
+    const WtkTheme *theme;
+    RECT full;
+    int active;
+    int accent;
+    int i;
+
+    if (!split || !split->designer)
+        return;
+    designer = split->designer;
+    theme = wtk_app_get_theme(designer->app);
+    active = split->active || split->hover;
+    accent = active ? (int)theme->accent : (int)theme->border;
+
+    full.left = 0;
+    full.top = 0;
+    full.right = width;
+    full.bottom = height;
+    fill_color(dc, &full, active ? theme->surface : WTK_RGB(232, 236, 243));
+
+    if (split->kind == SPLIT_BOTTOM) {
+        int y = height / 2;
+        RECT pill;
+        line_color(dc, 0, y, width, y, accent, 1);
+        pill.left = width / 2 - 18;
+        pill.right = width / 2 + 18;
+        pill.top = y - 4;
+        pill.bottom = y + 4;
+        round_rect_color(dc, pill, 4, theme->surface,
+                         active ? theme->accent : theme->border, 1);
+        for (i = -1; i <= 1; ++i) {
+            int x = width / 2 + i * 7;
+            line_color(dc, x, y - 2, x, y + 2,
+                       active ? theme->accent : theme->muted, 1);
+        }
+    } else {
+        int x = width / 2;
+        RECT pill;
+        line_color(dc, x, 0, x, height, accent, 1);
+        pill.left = x - 4;
+        pill.right = x + 4;
+        pill.top = height / 2 - 18;
+        pill.bottom = height / 2 + 18;
+        round_rect_color(dc, pill, 4, theme->surface,
+                         active ? theme->accent : theme->border, 1);
+        for (i = -1; i <= 1; ++i) {
+            int y = height / 2 + i * 7;
+            line_color(dc, x - 2, y, x + 2, y,
+                       active ? theme->accent : theme->muted, 1);
+        }
+    }
+    (void)widget;
+}
+
+static void splitter_apply(Designer *designer, SplitterData *split,
+                           int screen_x, int screen_y)
+{
+    int dpi = wtk_app_dpi(designer->app);
+    int delta;
+    if (!split)
+        return;
+    if (split->kind == SPLIT_LEFT || split->kind == SPLIT_RIGHT) {
+        delta = screen_x - split->start_x;
+        delta = MulDiv(delta, 96, dpi > 0 ? dpi : 96);
+    } else {
+        delta = screen_y - split->start_y;
+        delta = MulDiv(delta, 96, dpi > 0 ? dpi : 96);
+    }
+
+    if (split->kind == SPLIT_LEFT) {
+        int new_width = clampi(split->start_size + delta, 150, 340);
+        designer->palette_w = new_width;
+        wtk_widget_set_size(designer->palette_card, new_width, 0);
+    } else if (split->kind == SPLIT_RIGHT) {
+        int new_width = clampi(split->start_size - delta, 260, 460);
+        designer->inspector_w = new_width;
+        wtk_widget_set_size(designer->inspector_card, new_width, 0);
+    } else {
+        int new_height = clampi(split->start_size - delta, 130, 380);
+        designer->code_h = new_height;
+        wtk_widget_set_size(designer->code_card, 0, new_height);
+    }
+    wtk_widget_redraw(designer->window);
+}
+
+static void on_splitter_down(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    SplitterData *split = (SplitterData *)data;
+    POINT point;
+    (void)widget;
+    (void)event;
+    if (!split || !split->designer)
+        return;
+    split->active = 1;
+    if (split->kind == SPLIT_LEFT)
+        split->start_size = split->designer->palette_w;
+    else if (split->kind == SPLIT_RIGHT)
+        split->start_size = split->designer->inspector_w;
+    else
+        split->start_size = split->designer->code_h;
+    GetCursorPos(&point);
+    split->start_x = point.x;
+    split->start_y = point.y;
+    SetCapture(wtk_widget_hwnd(widget));
+    wtk_widget_redraw(widget);
+    designer_status(split->designer, "拖动分隔条调整面板尺寸");
+}
+
+static void on_splitter_move(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    SplitterData *split = (SplitterData *)data;
+    POINT point;
+    (void)event;
+    if (!split || !split->designer)
+        return;
+    GetCursorPos(&point);
+    if (split->active) {
+        splitter_apply(split->designer, split, point.x, point.y);
+        wtk_widget_redraw(widget);
+        return;
+    }
+    if (!split->hover) {
+        split->hover = 1;
+        wtk_widget_redraw(widget);
+    }
+}
+
+static void on_splitter_up(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    SplitterData *split = (SplitterData *)data;
+    (void)event;
+    if (!split || !split->designer)
+        return;
+    split->active = 0;
+    if (GetCapture() == wtk_widget_hwnd(widget))
+        ReleaseCapture();
+    wtk_widget_redraw(widget);
+    designer_status(split->designer, "面板尺寸已调整");
+}
+
+static void on_splitter_leave(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    SplitterData *split = (SplitterData *)data;
+    (void)event;
+    if (!split)
+        return;
+    if (!split->active && split->hover) {
+        split->hover = 0;
+        wtk_widget_redraw(widget);
+    }
+}
+
+static WtkWidget *make_splitter(Designer *designer, WtkWidget *parent,
+                                SplitterKind kind, SplitterData *split)
+{
+    WtkWidget *widget = wtk_canvas(parent, 8, 8);
+    const WtkTheme *theme = wtk_app_get_theme(designer->app);
+    if (!widget)
+        return NULL;
+    memset(split, 0, sizeof(*split));
+    split->designer = designer;
+    split->kind = kind;
+    wtk_widget_set_focus_ring(widget, 0);
+    wtk_widget_set_background(widget, theme->window_bg);
+    wtk_widget_set_cursor(widget, kind == SPLIT_BOTTOM ? WTK_CURSOR_SIZE_V
+                                                       : WTK_CURSOR_SIZE_H);
+    wtk_canvas_set_draw(widget, splitter_draw, split);
+    wtk_bind(widget, WTK_EVENT_MOUSE_DOWN, on_splitter_down, split);
+    wtk_bind(widget, WTK_EVENT_MOUSE_MOVE, on_splitter_move, split);
+    wtk_bind(widget, WTK_EVENT_MOUSE_UP, on_splitter_up, split);
+    wtk_bind(widget, WTK_EVENT_MOUSE_LEAVE, on_splitter_leave, split);
+    return widget;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Style selection                                                           */
+/* ------------------------------------------------------------------------- */
+
+static const char *style_label(WtkStyle style)
+{
+    switch (style) {
+    case WTK_STYLE_NATIVE:
+        return "风格：原生";
+    case WTK_STYLE_WINTK:
+        return "风格：WinTk";
+    case WTK_STYLE_AUTO:
+    default:
+        return "风格：自动";
+    }
+}
+
+static void designer_update_style_button(Designer *designer)
+{
+    if (!designer || !designer->style_button)
+        return;
+    wtk_button_set_text(designer->style_button, style_label(
+        wtk_app_get_style(designer->app)));
+}
+
+static void on_style_click(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    Designer *designer = (Designer *)data;
+    HMENU menu;
+    RECT rect;
+    WtkStyle current;
+    int command;
+
+    (void)widget;
+    (void)event;
+    if (!designer)
+        return;
+    current = wtk_app_get_style(designer->app);
+    menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(menu, MF_STRING | (current == WTK_STYLE_AUTO ? MF_CHECKED : 0),
+                1, L"自动（跟随系统）");
+    AppendMenuW(menu,
+                MF_STRING | (current == WTK_STYLE_NATIVE ? MF_CHECKED : 0),
+                2, L"原生 Windows");
+    AppendMenuW(menu,
+                MF_STRING | (current == WTK_STYLE_WINTK ? MF_CHECKED : 0),
+                3, L"WinTk 自定义");
+    SetMenuDefaultItem(menu, 1, FALSE);
+    GetWindowRect(wtk_widget_hwnd(designer->style_button), &rect);
+    command = TrackPopupMenu(menu,
+                             TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                             rect.left, rect.bottom, 0,
+                             wtk_widget_hwnd(designer->window), NULL);
+    DestroyMenu(menu);
+    if (command == 1)
+        wtk_app_set_style(designer->app, WTK_STYLE_AUTO);
+    else if (command == 2)
+        wtk_app_set_style(designer->app, WTK_STYLE_NATIVE);
+    else if (command == 3)
+        wtk_app_set_style(designer->app, WTK_STYLE_WINTK);
+    else
+        return;
+    designer->doc.style = (int)wtk_app_get_style(designer->app);
+    designer_update_style_button(designer);
+    designer_regenerate_code(designer);
+    designer_redraw(designer);
+    designer_status(designer, wtk_app_resolved_style(designer->app) ==
+                                      WTK_STYLE_NATIVE
+                                  ? "风格：原生 Windows"
+                                  : "风格：WinTk 自定义");
+}
+
+/* ------------------------------------------------------------------------- */
 /* UI construction                                                           */
 /* ------------------------------------------------------------------------- */
 
@@ -2090,6 +2823,32 @@ static WtkWidget *build_header(Designer *designer, WtkWidget *window)
     wtk_pack(header, WTK_SIDE_TOP, WTK_FILL_X, 0, 24, 14);
 
     wtk_widget_set_background(actions, theme->window_bg);
+
+    designer->style_button =
+        wtk_button(actions, style_label(wtk_app_get_style(designer->app)));
+    wtk_button_set_style(designer->style_button, WTK_BUTTON_SECONDARY);
+    wtk_widget_set_size(designer->style_button, 0, 38);
+    wtk_pack(designer->style_button, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4,
+             0);
+    wtk_bind(designer->style_button, WTK_EVENT_CLICK, on_style_click,
+             designer);
+
+    designer->undo_button = wtk_button(actions, "撤销");
+    wtk_button_set_style(designer->undo_button, WTK_BUTTON_SECONDARY);
+    wtk_widget_set_size(designer->undo_button, 0, 38);
+    wtk_widget_set_enabled(designer->undo_button, 0);
+    wtk_pack(designer->undo_button, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4, 0);
+    wtk_bind(designer->undo_button, WTK_EVENT_CLICK, on_undo_click,
+             designer);
+
+    designer->redo_button = wtk_button(actions, "重做");
+    wtk_button_set_style(designer->redo_button, WTK_BUTTON_SECONDARY);
+    wtk_widget_set_size(designer->redo_button, 0, 38);
+    wtk_widget_set_enabled(designer->redo_button, 0);
+    wtk_pack(designer->redo_button, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4, 0);
+    wtk_bind(designer->redo_button, WTK_EVENT_CLICK, on_redo_click,
+             designer);
+
     designer->clear_button = wtk_button(actions, "清空");
     wtk_button_set_style(designer->clear_button, WTK_BUTTON_SECONDARY);
     wtk_widget_set_size(designer->clear_button, 0, 38);
@@ -2133,8 +2892,8 @@ static WtkWidget *build_code_panel(Designer *designer, WtkWidget *window)
     wtk_widget_set_background(card, WTK_RGB(16, 24, 40));
     wtk_widget_set_border(card, WTK_RGB(40, 55, 79), 1, 14);
     wtk_widget_set_padding(card, 12, 10, 12, 12);
-    wtk_widget_set_size(card, 0, 218);
-    wtk_pack(card, WTK_SIDE_BOTTOM, WTK_FILL_X, 0, 24, 10);
+    wtk_widget_set_size(card, 0, designer->code_h);
+    designer->code_card = card;
 
     wtk_widget_set_background(header, WTK_RGB(16, 24, 40));
     wtk_widget_set_font(hint, NULL, 9, 0);
@@ -2164,14 +2923,14 @@ static WtkWidget *build_palette(Designer *designer, WtkWidget *workspace)
     WtkWidget *title = make_heading(card, "控件库", 14);
     WtkWidget *hint = wtk_label(card, "拖到画布，或单击添加");
 
-    wtk_widget_set_size(card, 196, 0);
-    wtk_pack(card, WTK_SIDE_LEFT, WTK_FILL_Y, 0, 0, 12);
+    designer->palette_card = card;
     wtk_pack(title, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 0);
     wtk_widget_set_font(hint, NULL, 9, 0);
     wtk_widget_set_foreground(hint, theme->muted);
     wtk_pack(hint, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 8);
 
     designer->palette = wtk_canvas(card, 160, 420);
+    designer->palette_cursor = WTK_CURSOR_HAND;
     wtk_widget_set_cursor(designer->palette, WTK_CURSOR_HAND);
     wtk_canvas_set_draw(designer->palette, palette_draw, designer);
     wtk_bind(designer->palette, WTK_EVENT_MOUSE_DOWN,
@@ -2200,8 +2959,7 @@ static WtkWidget *build_inspector(Designer *designer, WtkWidget *workspace)
     WtkWidget *delete_button;
     WtkWidget *bottom_hint;
 
-    wtk_widget_set_size(card, 316, 0);
-    wtk_pack(card, WTK_SIDE_RIGHT, WTK_FILL_Y, 0, 12, 12);
+    designer->inspector_card = card;
     wtk_pack(title, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 0);
     wtk_widget_set_font(hint, NULL, 9, 0);
     wtk_widget_set_foreground(hint, theme->muted);
@@ -2276,7 +3034,7 @@ static WtkWidget *build_canvas_card(Designer *designer, WtkWidget *workspace)
     WtkWidget *title = make_heading(header, "页面画布", 13);
     WtkWidget *hint = wtk_label(header, "");
 
-    wtk_pack(card, WTK_SIDE_LEFT, WTK_FILL_BOTH, 1, 0, 0);
+    designer->center_card = card;
     wtk_widget_set_background(header, theme->surface);
     wtk_widget_set_font(hint, NULL, 9, 0);
     wtk_widget_set_foreground(hint, theme->muted);
@@ -2294,6 +3052,8 @@ static WtkWidget *build_canvas_card(Designer *designer, WtkWidget *workspace)
              designer);
     wtk_bind(designer->canvas, WTK_EVENT_MOUSE_UP, on_canvas_mouse_up,
              designer);
+    wtk_bind(designer->canvas, WTK_EVENT_MOUSE_LEAVE,
+             on_canvas_mouse_leave, designer);
     wtk_bind(designer->canvas, WTK_EVENT_KEY_DOWN, on_canvas_key_down,
              designer);
     wtk_pack(designer->canvas, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 0);
@@ -2303,12 +3063,38 @@ static WtkWidget *build_canvas_card(Designer *designer, WtkWidget *workspace)
 static WtkWidget *build_workspace(Designer *designer, WtkWidget *window)
 {
     WtkWidget *workspace = wtk_frame(window);
+    WtkWidget *palette;
+    WtkWidget *inspector;
+    WtkWidget *canvas_card;
+
     wtk_widget_set_background(workspace,
                               wtk_app_get_theme(designer->app)->window_bg);
     wtk_pack(workspace, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 24, 0);
-    build_palette(designer, workspace);
-    build_inspector(designer, workspace);
-    build_canvas_card(designer, workspace);
+
+    palette = build_palette(designer, workspace);
+    wtk_widget_set_size(palette, designer->palette_w, 0);
+    wtk_pack(palette, WTK_SIDE_LEFT, WTK_FILL_Y, 0, 0, 0);
+
+    designer->left_split = make_splitter(designer, workspace, SPLIT_LEFT,
+                                         &designer->split_left);
+    if (designer->left_split) {
+        wtk_widget_set_size(designer->left_split, 8, 0);
+        wtk_pack(designer->left_split, WTK_SIDE_LEFT, WTK_FILL_Y, 0, 0, 0);
+    }
+
+    inspector = build_inspector(designer, workspace);
+    wtk_widget_set_size(inspector, designer->inspector_w, 0);
+    wtk_pack(inspector, WTK_SIDE_RIGHT, WTK_FILL_Y, 0, 0, 0);
+
+    designer->right_split = make_splitter(designer, workspace, SPLIT_RIGHT,
+                                          &designer->split_right);
+    if (designer->right_split) {
+        wtk_widget_set_size(designer->right_split, 8, 0);
+        wtk_pack(designer->right_split, WTK_SIDE_RIGHT, WTK_FILL_Y, 0, 0, 0);
+    }
+
+    canvas_card = build_canvas_card(designer, workspace);
+    wtk_pack(canvas_card, WTK_SIDE_LEFT, WTK_FILL_BOTH, 1, 0, 0);
     return workspace;
 }
 
@@ -2330,7 +3116,12 @@ static int run_designer(void)
     designer->app = app;
     designer->selected = -1;
     designer->palette_hover = -1;
+    designer->palette_w = 196;
+    designer->inspector_w = 316;
+    designer->code_h = 218;
+    designer->snap_enabled = 1;
     designer_document_default(&designer->doc);
+    designer->doc.style = (int)wtk_app_get_style(app);
 
     font_family = wtk_app_ui_font_family(app);
     utf8_to_wide(font_family, designer->font_family, LF_FACESIZE);
@@ -2348,11 +3139,30 @@ static int run_designer(void)
     wtk_window_set_min_size(window, DESIGNER_MIN_W, DESIGNER_MIN_H);
     wtk_widget_set_background(window,
                               wtk_app_get_theme(app)->window_bg);
+    designer->theme_button =
+        OpenThemeData(wtk_widget_hwnd(window), L"BUTTON");
+    designer->theme_edit = OpenThemeData(wtk_widget_hwnd(window), L"EDIT");
+    designer->theme_trackbar =
+        OpenThemeData(wtk_widget_hwnd(window), L"TRACKBAR");
+    designer->theme_progress =
+        OpenThemeData(wtk_widget_hwnd(window), L"PROGRESS");
 
     build_header(designer, window);
-    build_code_panel(designer, window);
+    {
+        WtkWidget *code = build_code_panel(designer, window);
+        wtk_pack(code, WTK_SIDE_BOTTOM, WTK_FILL_X, 0, 24, 8);
+    }
+    designer->bottom_split =
+        make_splitter(designer, window, SPLIT_BOTTOM,
+                      &designer->split_bottom);
+    if (designer->bottom_split) {
+        wtk_widget_set_size(designer->bottom_split, 0, 8);
+        wtk_pack(designer->bottom_split, WTK_SIDE_BOTTOM, WTK_FILL_X, 0,
+                 24, 0);
+    }
     build_workspace(designer, window);
 
+    designer_update_history_buttons(designer);
     designer_update_page_caption(designer);
     designer_sync_properties(designer);
     designer_regenerate_code(designer);
@@ -2360,6 +3170,16 @@ static int run_designer(void)
 
     wtk_window_center(window);
     wtk_run(app);
+    if (designer->theme_button)
+        CloseThemeData(designer->theme_button);
+    if (designer->theme_edit)
+        CloseThemeData(designer->theme_edit);
+    if (designer->theme_trackbar)
+        CloseThemeData(designer->theme_trackbar);
+    if (designer->theme_progress)
+        CloseThemeData(designer->theme_progress);
+    free(designer->undo);
+    free(designer->redo);
     wtk_app_free(app);
     free(designer);
     return 0;

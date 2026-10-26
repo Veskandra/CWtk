@@ -34,7 +34,7 @@ target_include_directories(wintk
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_compile_definitions(wintk PUBLIC UNICODE _UNICODE)
-target_link_libraries(wintk PUBLIC user32 gdi32 comctl32)
+target_link_libraries(wintk PUBLIC user32 gdi32 comctl32 uxtheme)
 
 if(MSVC)
     target_compile_options(wintk PRIVATE /W4)
@@ -59,20 +59,15 @@ add_executable(wintk_gallery WIN32
 target_link_libraries(wintk_gallery PRIVATE WinTk::wintk)
 target_include_directories(wintk_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
-add_executable(wintk_designer WIN32
-    examples/designer.c
-    examples/designer_model.c
-    ${WINTK_RESOURCE}
-)
-target_link_libraries(wintk_designer PRIVATE WinTk::wintk comdlg32)
-target_include_directories(wintk_designer PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/examples"
-    "${CMAKE_CURRENT_SOURCE_DIR}/resources"
-)
-
 if(MINGW)
     # Keep the examples self-contained (no libgcc_s DLL next to the .exe).
     target_link_options(hello PRIVATE -static-libgcc)
     target_link_options(wintk_gallery PRIVATE -static-libgcc)
-    target_link_options(wintk_designer PRIVATE -static-libgcc)
+endif()
+
+# WinTk Designer is a separate subproject. It can also be configured directly:
+#   cmake -S designer -B designer/build-cmake -G "MinGW Makefiles"
+option(WINTK_BUILD_DESIGNER "Build the WinTk Designer subproject" ON)
+if(WINTK_BUILD_DESIGNER)
+    add_subdirectory(designer)
 endif()

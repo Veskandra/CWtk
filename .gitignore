@@ -1,5 +1,7 @@
 build/
 build-cmake/
+designer/build/
+designer/build-cmake/
 out/
 *.o
 *.obj

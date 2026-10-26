@@ -1,0 +1,12 @@
+build/
+build-cmake/
+out/
+*.o
+*.obj
+*.exe
+*.a
+*.lib
+*.ilk
+*.pdb
+*.res
+*.bmp

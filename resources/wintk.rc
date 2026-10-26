@@ -1,0 +1,5 @@
+#include <windows.h>
+
+1 RT_MANIFEST "wintk.manifest"
+
+WINTK_ICON ICON "wintk.ico"

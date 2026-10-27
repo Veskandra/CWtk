@@ -2284,6 +2284,44 @@ static void on_palette_mouse_move(WtkWidget *widget, WtkEvent *event,
     }
 }
 
+static int rects_overlap_with_margin(const DesignItem *item, int x, int y,
+                                     int w, int h)
+{
+    return x < item->x + item->w + 8 && x + w + 8 > item->x &&
+           y < item->y + item->h + 8 && y + h + 8 > item->y;
+}
+
+static void find_free_slot(Designer *designer, int w, int h, int *x, int *y)
+{
+    int max_x = designer->doc.page_w - w;
+    int max_y = designer->doc.page_h - h;
+    int step_x = 24;
+    int step_y = 24;
+    int cx;
+    int cy;
+    int i;
+
+    for (cy = 24; cy <= max_y; cy += step_y) {
+        for (cx = 24; cx <= max_x; cx += step_x) {
+            int free = 1;
+            for (i = 0; i < designer->doc.count; ++i) {
+                if (rects_overlap_with_margin(&designer->doc.items[i], cx, cy,
+                                              w, h)) {
+                    free = 0;
+                    break;
+                }
+            }
+            if (free) {
+                *x = cx;
+                *y = cy;
+                return;
+            }
+        }
+    }
+    *x = (designer->doc.page_w - w) / 2;
+    *y = (designer->doc.page_h - h) / 2;
+}
+
 static void on_palette_mouse_up(WtkWidget *widget, WtkEvent *event, void *data)
 {
     Designer *designer = (Designer *)data;
@@ -2305,9 +2343,7 @@ static void on_palette_mouse_up(WtkWidget *widget, WtkEvent *event, void *data)
         y = designer->drop_y;
         designer_add_kind(designer, designer->palette_kind, x, y);
     } else if (!designer->palette_dragging) {
-        int offset = (designer->doc.count % 5) * 12;
-        x = (designer->doc.page_w - default_w) / 2 + offset;
-        y = (designer->doc.page_h - default_h) / 2 + offset;
+        find_free_slot(designer, default_w, default_h, &x, &y);
         designer_add_kind(designer, designer->palette_kind, x, y);
     }
     designer->palette_pressed = 0;
@@ -2338,8 +2374,68 @@ static void on_palette_mouse_leave(WtkWidget *widget, WtkEvent *event,
 /* Live preview, clear and export                                            */
 /* ------------------------------------------------------------------------- */
 
+typedef struct PreviewAnim {
+    WtkApp *app;
+    WtkWidget *window;
+    WtkWidget **bars;
+    int count;
+    int cap;
+    unsigned timer;
+    int alive;
+    double phase;
+} PreviewAnim;
+
+static void preview_anim_add(PreviewAnim *anim, WtkWidget *bar)
+{
+    if (!anim || !bar)
+        return;
+    if (anim->count >= anim->cap) {
+        int cap = anim->cap ? anim->cap * 2 : 4;
+        WtkWidget **bars =
+            (WtkWidget **)realloc(anim->bars, (size_t)cap * sizeof(*bars));
+        if (!bars)
+            return;
+        anim->bars = bars;
+        anim->cap = cap;
+    }
+    anim->bars[anim->count++] = bar;
+}
+
+static void preview_anim_tick(WtkApp *app, void *userdata)
+{
+    PreviewAnim *anim = (PreviewAnim *)userdata;
+    int i;
+    if (!anim || !anim->alive)
+        return;
+    anim->phase += 0.025;
+    if (anim->phase > 1.05)
+        anim->phase = 0.0;
+    for (i = 0; i < anim->count; ++i) {
+        double value = anim->phase + (double)i * 0.13;
+        while (value > 1.0)
+            value -= 1.0;
+        wtk_progress_set(anim->bars[i], value);
+    }
+    anim->timer = wtk_after(app, 50, preview_anim_tick, anim);
+}
+
+static void on_preview_close(WtkWidget *widget, WtkEvent *event, void *userdata)
+{
+    PreviewAnim *anim = (PreviewAnim *)userdata;
+    (void)widget;
+    (void)event;
+    if (!anim)
+        return;
+    anim->alive = 0;
+    if (anim->timer)
+        wtk_cancel_timer(anim->app, anim->timer);
+    free(anim->bars);
+    free(anim);
+}
+
 static WtkWidget *create_preview_item(WtkWidget *parent,
-                                      const DesignItem *item)
+                                      const DesignItem *item,
+                                      PreviewAnim *anim)
 {
     WtkWidget *widget = NULL;
 
@@ -2380,7 +2476,8 @@ static WtkWidget *create_preview_item(WtkWidget *parent,
         break;
     case DK_PROGRESS:
         widget = wtk_progress(parent);
-        wtk_progress_set(widget, 0.5);
+        wtk_progress_set(widget, 0.0);
+        preview_anim_add(anim, widget);
         break;
     case DK_SEPARATOR:
         widget = wtk_separator(parent);
@@ -2415,6 +2512,7 @@ static void designer_open_preview(Designer *designer)
     char title[200];
     WtkWidget *window;
     WtkWidget *page;
+    PreviewAnim *anim;
     int i;
 
     if (!designer)
@@ -2427,14 +2525,23 @@ static void designer_open_preview(Designer *designer)
                         "无法创建预览窗口。", WTK_ICON_ERROR);
         return;
     }
+    anim = (PreviewAnim *)calloc(1, sizeof(*anim));
+    if (anim) {
+        anim->app = designer->app;
+        anim->window = window;
+        anim->alive = 1;
+        wtk_bind(window, WTK_EVENT_CLOSE, on_preview_close, anim);
+    }
     page = wtk_frame(window);
     wtk_widget_set_background(page, WTK_RGB(255, 255, 255));
     wtk_widget_set_padding(page, 0, 0, 0, 0);
     wtk_pack(page, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 0);
     for (i = 0; i < designer->doc.count; ++i) {
-        if (!create_preview_item(page, &designer->doc.items[i]))
+        if (!create_preview_item(page, &designer->doc.items[i], anim))
             break;
     }
+    if (anim && anim->count > 0)
+        anim->timer = wtk_after(designer->app, 50, preview_anim_tick, anim);
     wtk_window_center(window);
     wtk_window_show(window);
     designer_status(designer, "已打开实时预览，关闭预览窗口即可返回编辑");

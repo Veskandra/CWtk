@@ -59,10 +59,34 @@ add_executable(wintk_gallery WIN32
 target_link_libraries(wintk_gallery PRIVATE WinTk::wintk)
 target_include_directories(wintk_gallery PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
+add_executable(form WIN32
+    examples/form.c
+    ${WINTK_RESOURCE}
+)
+target_link_libraries(form PRIVATE WinTk::wintk)
+target_include_directories(form PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
+add_executable(dashboard WIN32
+    examples/dashboard.c
+    ${WINTK_RESOURCE}
+)
+target_link_libraries(dashboard PRIVATE WinTk::wintk)
+target_include_directories(dashboard PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
+add_executable(canvas WIN32
+    examples/canvas.c
+    ${WINTK_RESOURCE}
+)
+target_link_libraries(canvas PRIVATE WinTk::wintk)
+target_include_directories(canvas PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
 if(MINGW)
     # Keep the examples self-contained (no libgcc_s DLL next to the .exe).
     target_link_options(hello PRIVATE -static-libgcc)
     target_link_options(wintk_gallery PRIVATE -static-libgcc)
+    target_link_options(form PRIVATE -static-libgcc)
+    target_link_options(dashboard PRIVATE -static-libgcc)
+    target_link_options(canvas PRIVATE -static-libgcc)
 endif()
 
 # WinTk Designer is a separate subproject. It can also be configured directly:

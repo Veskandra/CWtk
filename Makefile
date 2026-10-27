@@ -20,6 +20,9 @@ LIB      := $(BUILD)/libwintk.a
 RES      := $(BUILD)/wintk-res.o
 GALLERY  := $(BUILD)/wintk_gallery.exe
 HELLO    := $(BUILD)/hello.exe
+FORM     := $(BUILD)/form.exe
+DASHBOARD:= $(BUILD)/dashboard.exe
+CANVAS   := $(BUILD)/canvas.exe
 DESIGNER := designer/build/wintk_designer.exe
 
 CPPFLAGS += -DUNICODE -D_UNICODE -Iinclude -Isrc
@@ -38,15 +41,22 @@ LIB_SRCS := \
 
 LIB_OBJS := $(patsubst src/%.c,$(OBJDIR)/%.o,$(LIB_SRCS))
 
-.PHONY: all gallery hello designer library run run-designer clean
+.PHONY: all gallery hello form dashboard canvas designer library run \
+	run-form run-dashboard run-canvas run-designer clean
 
-all: library gallery hello designer
+all: library gallery hello form dashboard canvas designer
 
 library: $(LIB)
 
 gallery: $(GALLERY)
 
 hello: $(HELLO)
+
+form: $(FORM)
+
+dashboard: $(DASHBOARD)
+
+canvas: $(CANVAS)
 
 designer:
 	$(MAKE) -C designer
@@ -69,8 +79,26 @@ $(GALLERY): examples/gallery.c $(LIB) $(RES) | $(BUILD)
 $(HELLO): examples/hello.c $(LIB) $(RES) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(FORM): examples/form.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(DASHBOARD): examples/dashboard.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(CANVAS): examples/canvas.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
 run: $(GALLERY)
 	@start "" "$(GALLERY)"
+
+run-form: $(FORM)
+	@start "" "$(FORM)"
+
+run-dashboard: $(DASHBOARD)
+	@start "" "$(DASHBOARD)"
+
+run-canvas: $(CANVAS)
+	@start "" "$(CANVAS)"
 
 run-designer: designer
 	@start "" "$(DESIGNER)"

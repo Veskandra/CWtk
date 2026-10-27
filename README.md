@@ -50,10 +50,15 @@ mingw32-make
 ```text
 build\libwintk.a
 build\hello.exe
+build\form.exe
+build\dashboard.exe
+build\canvas.exe
 build\wintk_gallery.exe
 designer\build\wintk_designer.exe
 designer\build\styles\wintk_builtin_styles.dll
 ```
+
+完整示例和逐段说明见 [docs/EXAMPLES.md](docs/EXAMPLES.md)。
 
 运行完整演示：
 

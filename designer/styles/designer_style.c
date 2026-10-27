@@ -1,5 +1,6 @@
 #include "wtk_internal.h"
 #include "designer_style.h"
+#include "style_plugin.h"
 
 #include <vssym32.h>
 #include <vsstyle.h>
@@ -1536,5 +1537,36 @@ void designer_style_apply(WtkApp *app, DesignerStyle style)
         wtk_app_set_style(app, WTK_STYLE_NATIVE);
         wtk_app_set_style_painter(app, &designer_style_painter, NULL);
     }
+}
+
+static WtkTheme style_native_theme;
+static WtkTheme style_fusion_theme;
+static int style_themes_ready;
+
+static void style_plugin_init_themes(void)
+{
+    if (style_themes_ready)
+        return;
+    wtk_theme_native(&style_native_theme);
+    wtk_theme_fusion(&style_fusion_theme);
+    style_themes_ready = 1;
+}
+
+static const WtkStylePluginStyle style_entries[] = {
+    { "native", "Windows 原生", WTK_STYLE_NATIVE, &style_native_theme,
+      &designer_style_painter },
+    { "fusion", "Fusion", WTK_STYLE_FUSION, &style_fusion_theme,
+      &designer_style_painter }
+};
+
+static const WtkStylePlugin style_plugin = {
+    WINTK_STYLE_PLUGIN_ABI, "WinTk Built-in Styles",
+    (int)(sizeof(style_entries) / sizeof(style_entries[0])), style_entries
+};
+
+WINTK_STYLE_EXPORT const WtkStylePlugin *wintk_style_plugin_get(void)
+{
+    style_plugin_init_themes();
+    return &style_plugin;
 }
 

@@ -51,15 +51,41 @@ endif()
 add_executable(wintk_designer WIN32
     src/designer.c
     src/designer_model.c
-    src/designer_style.c
     ../resources/wintk.rc
 )
 target_include_directories(wintk_designer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/styles"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources"
 )
+
+add_library(wintk_builtin_styles SHARED
+    styles/designer_style.c
+)
+target_include_directories(wintk_builtin_styles PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/styles"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(wintk_builtin_styles PRIVATE UNICODE _UNICODE)
+if(MSVC)
+    target_compile_options(wintk_builtin_styles PRIVATE /W4)
+else()
+    target_compile_options(wintk_builtin_styles PRIVATE
+        -Wall -Wextra -Wpedantic
+    )
+endif()
+target_link_libraries(wintk_builtin_styles PRIVATE
+    ${WINTK_DESIGNER_FRAMEWORK}
+    uxtheme
+)
+set_target_properties(wintk_builtin_styles PROPERTIES
+    PREFIX ""
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/styles"
+)
+add_dependencies(wintk_designer wintk_builtin_styles)
 target_compile_definitions(wintk_designer PRIVATE UNICODE _UNICODE)
 if(MSVC)
     target_compile_options(wintk_designer PRIVATE /W4)

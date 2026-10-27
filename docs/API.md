@@ -193,7 +193,7 @@ wtk_app_set_style(app, WTK_STYLE_FUSION);
 ```
 
 - 核心只绘制原始 WinTk GDI 外观；`WTK_STYLE_*` 和 `wtk_app_set_style()` 仅保留为兼容性提示，不会改变核心绘制。
-- 要让 Native/Fusion 生效，需要注册 `WtkStylePainter`；Designer 提供的模块就在 `designer/src/designer_style.c`。
+- 要让 Native/Fusion 生效，需要注册 `WtkStylePainter`。Designer 不再把画笔编进 exe，而是从 exe 同目录的 `styles/*.dll` 动态加载插件。
 - `wtk_app_set_style_painter(app, painter, userdata)` 安装画笔；传 `NULL` 恢复核心 GDI。
 - painter 的 `paint(widget, hdc, bounds, state)` 覆盖控件/窗口绘制；`field_metrics` 控制原生 EDIT/LISTBOX 的宿主内边距。
 - `WtkPaintState` 包含控件类型、文本、字体、颜色、状态、值、尺寸和按钮样式；可参考 `include/wintk.h`。
@@ -233,7 +233,36 @@ WtkWidgetKind wtk_widget_kind(WtkWidget *widget);
   - hover/pressed/focused/checked/selected/enabled
   - 按钮样式、焦点环、进度、滑块值和只读/密码状态
 - 注册 painter 会立即刷新现有窗口；传 `NULL` 恢复核心 GDI。
-- `designer/src/designer_style.c` 是参考实现，同时提供 Native 和 Fusion 画笔。
+- `designer/styles/designer_style.c` 是内置 Native/Fusion 画笔的源码；它编译成 `wintk_builtin_styles.dll`，不进入 Designer.exe。
+
+### 风格插件 DLL
+
+风格插件 ABI 在 `designer/styles/style_plugin.h`：
+
+```c
+typedef struct WtkStylePluginStyle {
+    const char *id;
+    const char *name;
+    WtkStyle hint;
+    const WtkTheme *theme;
+    const WtkStylePainter *painter;
+} WtkStylePluginStyle;
+
+typedef struct WtkStylePlugin {
+    unsigned abi_version;
+    const char *name;
+    int style_count;
+    const WtkStylePluginStyle *styles;
+} WtkStylePlugin;
+
+__declspec(dllexport) const WtkStylePlugin *wintk_style_plugin_get(void);
+```
+
+- 每个 DLL 导出一个 `wintk_style_plugin_get()`；返回的插件可包含多个风格。
+- `theme` 和 `painter` 必须保持有效直到 DLL 被卸载；Designer 在进程生命周期内保持 DLL 加载。
+- Designer 启动时扫描 `styles/*.dll`，风格菜单动态列出插件；菜单末尾的“导入风格 DLL...”可加载任意位置的新插件。
+- 外部插件可完全基于公开的 `WtkPaintState` 实现 painter，不依赖 WinTk 内部头文件。
+- 内置 DLL 返回 `native` 和 `fusion` 两个风格；WinTk 是核心 GDI，不来自插件。
 
 ### 尺寸与字体辅助
 
@@ -678,10 +707,12 @@ build/libwintk.a
 使用 Designer 导出的 Native/Fusion 页面时，需要额外编译伴生风格模块：
 
 ```text
-designer/src/designer_style.c
+designer/styles/designer_style.c
 ```
 
-并添加 `-Idesigner/src -Isrc`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
+并添加 `-Idesigner/styles -Isrc`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
+
+Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/wintk_builtin_styles.dll`。移动 Designer 时需要把 `styles` 文件夹一起复制；删除插件目录后 Designer 仍可运行，但只提供 WinTk 核心风格。
 
 ---
 

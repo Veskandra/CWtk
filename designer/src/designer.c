@@ -6,7 +6,7 @@
  */
 #include "wintk.h"
 #include "designer_model.h"
-#include "designer_style.h"
+#include "style_plugin.h"
 
 #include <commdlg.h>
 #include <stdio.h>
@@ -19,8 +19,8 @@
 
 #define DESIGNER_WINDOW_W 1440
 #define DESIGNER_WINDOW_H 900
-#define DESIGNER_MIN_W 1200
-#define DESIGNER_MIN_H 840
+#define DESIGNER_MIN_W 1000
+#define DESIGNER_MIN_H 660
 #define DESIGNER_GRID 8
 #define DESIGNER_CODE_CAP 65536
 
@@ -68,6 +68,17 @@ typedef struct SplitterData {
     int start_size;
 } SplitterData;
 
+#define DESIGNER_MAX_STYLES 16
+
+typedef struct LoadedStyle {
+    char id[64];
+    char name[64];
+    WtkStyle hint;
+    const WtkTheme *theme;
+    const WtkStylePainter *painter;
+    HMODULE module;
+} LoadedStyle;
+
 struct Designer {
     WtkApp *app;
     WtkWidget *window;
@@ -90,6 +101,7 @@ struct Designer {
     int palette_w;
     int inspector_w;
     int code_h;
+    int code_manual;
 
     WtkWidget *type_value;
     WtkWidget *name_entry;
@@ -111,6 +123,11 @@ struct Designer {
     WtkWidget *style_button;
     WtkWidget *undo_button;
     WtkWidget *redo_button;
+
+    WtkTheme wintk_theme;
+    LoadedStyle styles[DESIGNER_MAX_STYLES];
+    int style_count;
+    int current_style;
 
     HTHEME theme_button;
     HTHEME theme_edit;
@@ -2728,8 +2745,9 @@ static void splitter_apply(Designer *designer, SplitterData *split,
         designer->inspector_w = new_width;
         wtk_widget_set_size(designer->inspector_card, new_width, 0);
     } else {
-        int new_height = clampi(split->start_size - delta, 130, 380);
+        int new_height = clampi(split->start_size - delta, 48, 380);
         designer->code_h = new_height;
+        designer->code_manual = 1;
         wtk_widget_set_size(designer->code_card, 0, new_height);
     }
     wtk_widget_redraw(designer->window);
@@ -2828,28 +2846,203 @@ static WtkWidget *make_splitter(Designer *designer, WtkWidget *parent,
 /* Style selection                                                           */
 /* ------------------------------------------------------------------------- */
 
-static const char *style_label(WtkStyle style)
+static void designer_init_styles(Designer *designer)
 {
-    switch (style) {
-    case WTK_STYLE_FUSION:
-        return "风格：Fusion";
-    case WTK_STYLE_NATIVE:
-        return "风格：Windows";
-    case WTK_STYLE_WINTK:
-        return "风格：WinTk";
-    case WTK_STYLE_AUTO:
-    default:
-        return "风格：自动";
+    LoadedStyle *base;
+    if (!designer)
+        return;
+    wtk_theme_default(&designer->wintk_theme);
+    designer->style_count = 0;
+    designer->current_style = 0;
+    base = &designer->styles[designer->style_count++];
+    memset(base, 0, sizeof(*base));
+    snprintf(base->id, sizeof(base->id), "%s", "wintk");
+    snprintf(base->name, sizeof(base->name), "%s", "WinTk");
+    base->hint = WTK_STYLE_WINTK;
+    base->theme = &designer->wintk_theme;
+    base->painter = NULL;
+}
+
+static int designer_style_id_exists(Designer *designer, const char *id)
+{
+    int i;
+    for (i = 0; i < designer->style_count; ++i) {
+        if (strcmp(designer->styles[i].id, id) == 0)
+            return 1;
     }
+    return 0;
+}
+
+static int designer_add_style_plugin(Designer *designer, const WCHAR *path,
+                                     int report_error)
+{
+    HMODULE module;
+    WtkStylePluginGetFn get_plugin;
+    const WtkStylePlugin *plugin;
+    int first = -1;
+    int i;
+
+    if (!designer || !path)
+        return -1;
+    module = LoadLibraryW(path);
+    if (!module) {
+        if (report_error)
+            wtk_message_box(designer->window, "导入风格失败",
+                            "无法加载 DLL。", WTK_ICON_ERROR);
+        return -1;
+    }
+    {
+        union {
+            FARPROC proc;
+            WtkStylePluginGetFn fn;
+        } symbol;
+        symbol.proc = GetProcAddress(module, "wintk_style_plugin_get");
+        get_plugin = symbol.fn;
+    }
+    if (!get_plugin) {
+        FreeLibrary(module);
+        if (report_error)
+            wtk_message_box(designer->window, "导入风格失败",
+                            "DLL 缺少 wintk_style_plugin_get 导出函数。",
+                            WTK_ICON_ERROR);
+        return -1;
+    }
+    plugin = get_plugin();
+    if (!plugin || plugin->abi_version != WINTK_STYLE_PLUGIN_ABI ||
+        plugin->style_count <= 0 || !plugin->styles) {
+        FreeLibrary(module);
+        if (report_error)
+            wtk_message_box(designer->window, "导入风格失败",
+                            "风格插件 ABI 不兼容。", WTK_ICON_ERROR);
+        return -1;
+    }
+    for (i = 0; i < plugin->style_count; ++i) {
+        const WtkStylePluginStyle *src = &plugin->styles[i];
+        LoadedStyle *dst;
+        if (designer->style_count >= DESIGNER_MAX_STYLES)
+            break;
+        if (!src->id || !src->name)
+            continue;
+        if (designer_style_id_exists(designer, src->id))
+            continue;
+        dst = &designer->styles[designer->style_count++];
+        memset(dst, 0, sizeof(*dst));
+        snprintf(dst->id, sizeof(dst->id), "%s", src->id);
+        snprintf(dst->name, sizeof(dst->name), "%s", src->name);
+        dst->hint = src->hint;
+        dst->theme = src->theme;
+        dst->painter = src->painter;
+        dst->module = module;
+        if (first < 0)
+            first = designer->style_count - 1;
+    }
+    if (first < 0) {
+        FreeLibrary(module);
+        if (report_error)
+            wtk_message_box(designer->window, "导入风格失败",
+                            "插件没有可用的新风格。", WTK_ICON_ERROR);
+    }
+    return first;
+}
+
+static void designer_load_style_folder(Designer *designer)
+{
+    WCHAR exe[MAX_PATH];
+    WCHAR pattern[MAX_PATH + 16];
+    WCHAR *slash;
+    WIN32_FIND_DATAW data;
+    HANDLE find;
+    DWORD length;
+    if (!designer)
+        return;
+    length = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH)
+        return;
+    slash = wcsrchr(exe, L'\\');
+    if (!slash)
+        return;
+    *slash = L'\0';
+    _snwprintf(pattern, MAX_PATH + 15, L"%ls\\styles\\*.dll", exe);
+    find = FindFirstFileW(pattern, &data);
+    if (find == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        WCHAR path[MAX_PATH + 32];
+        _snwprintf(path, MAX_PATH + 31, L"%ls\\styles\\%ls", exe, data.cFileName);
+        designer_add_style_plugin(designer, path, 0);
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+
+static const char *designer_style_name(Designer *designer)
+{
+    if (!designer || designer->current_style < 0 ||
+        designer->current_style >= designer->style_count)
+        return "WinTk";
+    return designer->styles[designer->current_style].name;
 }
 
 static void designer_update_style_button(Designer *designer)
 {
+    char label[128];
     if (!designer || !designer->style_button)
         return;
-    wtk_button_set_text(
-        designer->style_button,
-        style_label(wtk_app_resolved_style(designer->app)));
+    snprintf(label, sizeof(label), "风格：%s", designer_style_name(designer));
+    wtk_button_set_text(designer->style_button, label);
+}
+
+static void designer_apply_style(Designer *designer, int index)
+{
+    LoadedStyle *style;
+    if (!designer || index < 0 || index >= designer->style_count)
+        return;
+    style = &designer->styles[index];
+    wtk_app_set_theme(designer->app,
+                      style->theme ? style->theme : &designer->wintk_theme);
+    wtk_app_set_style(designer->app, style->hint);
+    wtk_app_set_style_painter(designer->app, style->painter, NULL);
+    designer->current_style = index;
+    if (style->hint == WTK_STYLE_NATIVE)
+        designer->doc.style = 1;
+    else if (style->hint == WTK_STYLE_WINTK)
+        designer->doc.style = 2;
+    else if (style->hint == WTK_STYLE_FUSION)
+        designer->doc.style = 3;
+    else
+        designer->doc.style = 0;
+    designer_update_style_button(designer);
+    if (designer->code_view)
+        designer_regenerate_code(designer);
+    designer_redraw(designer);
+    {
+        char status[160];
+        snprintf(status, sizeof(status), "风格：%s", style->name);
+        designer_status(designer, status);
+    }
+}
+
+static int designer_import_style_dialog(Designer *designer)
+{
+    WCHAR path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn;
+    int index;
+    if (!designer)
+        return -1;
+    memset(&ofn, 0, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = wtk_widget_hwnd(designer->window);
+    ofn.lpstrFilter = L"WinTk 风格插件 (*.dll)\0*.dll\0所有文件 (*.*)\0*.*\0\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"dll";
+    ofn.lpstrTitle = L"导入 WinTk 风格插件";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn))
+        return -1;
+    index = designer_add_style_plugin(designer, path, 1);
+    if (index >= 0)
+        designer_apply_style(designer, index);
+    return index;
 }
 
 static void on_style_click(WtkWidget *widget, WtkEvent *event, void *data)
@@ -2857,52 +3050,40 @@ static void on_style_click(WtkWidget *widget, WtkEvent *event, void *data)
     Designer *designer = (Designer *)data;
     HMENU menu;
     RECT rect;
-    WtkStyle current;
     int command;
+    int i;
 
     (void)widget;
     (void)event;
     if (!designer)
         return;
-    current = wtk_app_get_style(designer->app);
     menu = CreatePopupMenu();
     if (!menu)
         return;
-    AppendMenuW(menu,
-                MF_STRING | (current == WTK_STYLE_NATIVE ? MF_CHECKED : 0),
-                1, L"Windows 原生");
-    AppendMenuW(menu,
-                MF_STRING | (current == WTK_STYLE_FUSION ? MF_CHECKED : 0),
-                2, L"Fusion（Qt 风格）");
-    AppendMenuW(menu,
-                MF_STRING | (current == WTK_STYLE_WINTK ? MF_CHECKED : 0),
-                3, L"WinTk 自定义");
-    SetMenuDefaultItem(menu, 1, FALSE);
+    for (i = 0; i < designer->style_count; ++i) {
+        WCHAR name[128];
+        utf8_to_wide(designer->styles[i].name, name,
+                     sizeof(name) / sizeof(name[0]));
+        AppendMenuW(menu,
+                    MF_STRING |
+                        (i == designer->current_style ? MF_CHECKED : 0),
+                    (UINT_PTR)(i + 1), name);
+    }
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING, 1000, L"导入风格 DLL...");
+    SetMenuDefaultItem(menu, (UINT)designer->current_style + 1, FALSE);
     GetWindowRect(wtk_widget_hwnd(designer->style_button), &rect);
     command = TrackPopupMenu(menu,
                              TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
                              rect.left, rect.bottom, 0,
                              wtk_widget_hwnd(designer->window), NULL);
     DestroyMenu(menu);
-    if (command == 1)
-        designer_style_apply(designer->app, DESIGNER_STYLE_NATIVE);
-    else if (command == 2)
-        designer_style_apply(designer->app, DESIGNER_STYLE_FUSION);
-    else if (command == 3)
-        designer_style_apply(designer->app, DESIGNER_STYLE_WINTK);
-    else
+    if (command == 1000) {
+        designer_import_style_dialog(designer);
         return;
-    designer->doc.style = (int)wtk_app_get_style(designer->app);
-    designer_update_style_button(designer);
-    designer_regenerate_code(designer);
-    designer_redraw(designer);
-    designer_status(designer, wtk_app_resolved_style(designer->app) ==
-                                      WTK_STYLE_NATIVE
-                                  ? "风格：Windows 原生"
-                                  : (wtk_app_resolved_style(designer->app) ==
-                                             WTK_STYLE_FUSION
-                                         ? "风格：Fusion / Qt 默认"
-                                         : "风格：WinTk 自定义"));
+    }
+    if (command >= 1 && command <= designer->style_count)
+        designer_apply_style(designer, command - 1);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2967,14 +3148,19 @@ static WtkWidget *build_header(Designer *designer, WtkWidget *window)
 
     wtk_widget_set_background(actions, theme->window_bg);
 
-    designer->style_button = wtk_button(
-        actions, style_label(wtk_app_resolved_style(designer->app)));
+    {
+        char style_text[128];
+        snprintf(style_text, sizeof(style_text), "风格：%s",
+                 designer_style_name(designer));
+        designer->style_button = wtk_button(actions, style_text);
+    }
     wtk_button_set_style(designer->style_button, WTK_BUTTON_SECONDARY);
-    wtk_widget_set_size(designer->style_button, 0, 38);
+    wtk_widget_set_size(designer->style_button, 200, 38);
     wtk_pack(designer->style_button, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4,
              0);
     wtk_bind(designer->style_button, WTK_EVENT_CLICK, on_style_click,
              designer);
+    designer_update_style_button(designer);
 
     designer->undo_button = wtk_button(actions, "撤销");
     wtk_button_set_style(designer->undo_button, WTK_BUTTON_SECONDARY);
@@ -3264,25 +3450,104 @@ static WtkWidget *build_workspace(Designer *designer, WtkWidget *window)
     return workspace;
 }
 
+static int designer_code_height_for_client(int logical_h)
+{
+    if (logical_h >= 820)
+        return 218;
+    if (logical_h <= 700)
+        return 48;
+    return 48 + (logical_h - 700) * 170 / 120;
+}
+
+static void designer_update_header_sizes(Designer *designer, int logical_w)
+{
+    int compact;
+    if (!designer || !designer->style_button)
+        return;
+    compact = logical_w < 1150;
+    wtk_widget_set_size(designer->style_button, compact ? 170 : 200,
+                        compact ? 34 : 38);
+    wtk_widget_set_size(designer->undo_button, 78, compact ? 34 : 38);
+    wtk_widget_set_size(designer->redo_button, 78, compact ? 34 : 38);
+    wtk_widget_set_size(designer->clear_button, 78, compact ? 34 : 38);
+    wtk_widget_set_size(designer->preview_button, 78, compact ? 34 : 38);
+    wtk_widget_set_size(designer->export_button, 110, compact ? 34 : 38);
+}
+
+static void designer_initial_bounds(WtkApp *app, int *width, int *height,
+                                    int *min_width, int *min_height)
+{
+    RECT work;
+    int dpi = wtk_app_dpi(app);
+    int logical_w = DESIGNER_WINDOW_W;
+    int logical_h = DESIGNER_WINDOW_H;
+    int min_w = DESIGNER_MIN_W;
+    int min_h = DESIGNER_MIN_H;
+
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+        int work_w = MulDiv(work.right - work.left, 96, dpi);
+        int work_h = MulDiv(work.bottom - work.top, 96, dpi);
+        min_w = work_w - 32;
+        min_h = work_h - 32;
+        if (min_w > DESIGNER_MIN_W)
+            min_w = DESIGNER_MIN_W;
+        if (min_h > DESIGNER_MIN_H)
+            min_h = DESIGNER_MIN_H;
+        if (min_w < 760)
+            min_w = 760;
+        if (min_h < 520)
+            min_h = 520;
+        logical_w = work_w - 64;
+        logical_h = work_h - 64;
+        if (logical_w < min_w)
+            logical_w = min_w;
+        if (logical_h < min_h)
+            logical_h = min_h;
+        if (logical_w > DESIGNER_WINDOW_W)
+            logical_w = DESIGNER_WINDOW_W;
+        if (logical_h > DESIGNER_WINDOW_H)
+            logical_h = DESIGNER_WINDOW_H;
+    }
+    *width = logical_w;
+    *height = logical_h;
+    *min_width = min_w;
+    *min_height = min_h;
+}
+
+static void on_designer_resize(WtkWidget *widget, WtkEvent *event, void *data)
+{
+    Designer *designer = (Designer *)data;
+    int dpi;
+    int logical_h;
+    int new_h;
+    (void)widget;
+    if (!designer || !designer->code_card || !event || designer->code_manual)
+        return;
+    dpi = wtk_app_dpi(designer->app);
+    logical_h = MulDiv(event->height, 96, dpi > 0 ? dpi : 96);
+    designer_update_header_sizes(
+        designer, MulDiv(event->width, 96, dpi > 0 ? dpi : 96));
+    new_h = designer_code_height_for_client(logical_h);
+    if (new_h != designer->code_h) {
+        designer->code_h = new_h;
+        wtk_widget_set_size(designer->code_card, 0, new_h);
+    }
+}
+
 static int run_designer(void)
 {
     Designer *designer;
     WtkApp *app;
     WtkWidget *window;
     const char *font_family;
+    int window_w = DESIGNER_WINDOW_W;
+    int window_h = DESIGNER_WINDOW_H;
+    int min_w = DESIGNER_MIN_W;
+    int min_h = DESIGNER_MIN_H;
 
     app = wtk_app_new();
     if (!app)
         return 1;
-    {
-        WtkStyle hint = wtk_app_get_style(app);
-        DesignerStyle initial = hint == WTK_STYLE_FUSION
-                                    ? DESIGNER_STYLE_FUSION
-                                    : (hint == WTK_STYLE_WINTK
-                                           ? DESIGNER_STYLE_WINTK
-                                           : DESIGNER_STYLE_NATIVE);
-        designer_style_apply(app, initial);
-    }
     designer = (Designer *)calloc(1, sizeof(*designer));
     if (!designer) {
         wtk_app_free(app);
@@ -3291,10 +3556,33 @@ static int run_designer(void)
     designer->app = app;
     designer->selected = -1;
     designer->palette_hover = -1;
+    designer_init_styles(designer);
+    designer_load_style_folder(designer);
+    {
+        WtkStyle hint = wtk_app_get_style(app);
+        int initial = 0;
+        int i;
+        for (i = 0; i < designer->style_count; ++i) {
+            if (designer->styles[i].hint == hint) {
+                initial = i;
+                break;
+            }
+        }
+        if (hint == WTK_STYLE_AUTO || hint == WTK_STYLE_NATIVE) {
+            for (i = 0; i < designer->style_count; ++i) {
+                if (designer->styles[i].hint == WTK_STYLE_NATIVE) {
+                    initial = i;
+                    break;
+                }
+            }
+        }
+        designer_apply_style(designer, initial);
+    }
     designer->palette_w = 196;
     designer->inspector_w = 316;
     designer->code_h = 218;
     designer->snap_enabled = 1;
+    designer_initial_bounds(app, &window_w, &window_h, &min_w, &min_h);
     designer_document_default(&designer->doc);
     designer->doc.style = (int)wtk_app_get_style(app);
 
@@ -3304,14 +3592,22 @@ static int run_designer(void)
         wcscpy(designer->font_family, L"Segoe UI");
 
     window = wtk_window(app, "WinTk Designer - 轻量级 C UI 页面编辑器",
-                        DESIGNER_WINDOW_W, DESIGNER_WINDOW_H);
+                        window_w, window_h);
     if (!window) {
         free(designer);
         wtk_app_free(app);
         return 1;
     }
     designer->window = window;
-    wtk_window_set_min_size(window, DESIGNER_MIN_W, DESIGNER_MIN_H);
+    wtk_window_set_min_size(window, min_w, min_h);
+    {
+        RECT client;
+        int dpi = wtk_app_dpi(app);
+        GetClientRect(wtk_widget_hwnd(window), &client);
+        designer->code_h = designer_code_height_for_client(
+            MulDiv(client.bottom, 96, dpi > 0 ? dpi : 96));
+    }
+    wtk_bind(window, WTK_EVENT_RESIZE, on_designer_resize, designer);
     wtk_widget_set_background(window,
                               wtk_app_get_theme(app)->window_bg);
     designer->theme_button =
@@ -3336,6 +3632,13 @@ static int run_designer(void)
                  24, 0);
     }
     build_workspace(designer, window);
+    {
+        RECT client;
+        int dpi = wtk_app_dpi(app);
+        GetClientRect(wtk_widget_hwnd(window), &client);
+        designer_update_header_sizes(
+            designer, MulDiv(client.right, 96, dpi > 0 ? dpi : 96));
+    }
 
     designer_update_history_buttons(designer);
     designer_update_page_caption(designer);

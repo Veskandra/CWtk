@@ -19,8 +19,8 @@
   - `grid`：支持 row/column span、sticky、列/行权重与最小尺寸。
   - `place`：绝对坐标 + 固定尺寸，供可视化设计器和像素级表单使用。
 - **核心只保留原始 GDI 自绘**：WinTk 库默认使用原来的圆角、主题色 GDI 控件；输入框、文本区和列表框仍是原生 `EDIT` / `LISTBOX`。
-- **风格绘制可注入**：核心提供 `WtkStylePainter` 绘制钩子；Native/Fusion 风格由 Designer 的风格模块实现，普通 WinTk 程序不会携带这些绘制代码。
-- **Designer 风格菜单**：Designer 可选择 Windows 原生、Fusion 或 WinTk 外观，并在导出代码中附带所选风格的绘制模块。
+- **风格绘制可注入**：核心提供 `WtkStylePainter` 绘制钩子；Native/Fusion 是 `styles/` 下的外部 DLL，Designer.exe 只保留加载器，普通 WinTk 程序不会携带这些绘制代码。
+- **Designer 风格插件**：启动时扫描 `styles/*.dll`，动态列出 Windows 原生、Fusion 和 WinTk；支持导入第三方风格 DLL；导出代码可附带内置风格的伴生模块。
 - **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
 - **统一事件模型**：CLICK、CHANGE、SUBMIT、FOCUS、鼠标、滚轮、键盘、RESIZE、CLOSE。
 - **键盘可用**：Tab / Shift+Tab 焦点循环、按钮 Enter/Space 激活、方向键操作滑块和单选组、Ctrl+Enter 提交多行文本。
@@ -52,6 +52,7 @@ build\libwintk.a
 build\hello.exe
 build\wintk_gallery.exe
 designer\build\wintk_designer.exe
+designer\build\styles\wintk_builtin_styles.dll
 ```
 
 运行完整演示：
@@ -155,12 +156,12 @@ wtk_button_set_style(button1, WTK_BUTTON_PRIMARY);
 wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 ```
 
-生成文件包含 `build_page()`、完整的 `WinMain()`，以及 `designer_style_apply()` 调用。选中风格由 Designer 的风格模块绘制；编译时要把 `designer/src/designer_style.c` 作为伴生模块一起编译，并链接 `user32`、`gdi32`、`comctl32`、`uxtheme`：
+生成文件包含 `build_page()`、完整的 `WinMain()`，以及 `designer_style_apply()` 调用。选中风格由 Designer 的风格模块绘制；编译时要把 `designer/styles/designer_style.c` 作为伴生模块一起编译，并链接 `user32`、`gdi32`、`comctl32`、`uxtheme`：
 
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
-    -Iinclude -Isrc -Idesigner/src ^
-    page.c designer\src\designer_style.c build\libwintk.a ^
+    -Iinclude -Isrc -Idesigner/styles ^
+    page.c designer\styles\designer_style.c build\libwintk.a ^
     -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
 ```
 
@@ -270,14 +271,18 @@ wtk_app_set_style_painter(app, NULL, NULL); /* 恢复核心 GDI */
 ```
 
 - 核心不包含 Native/Fusion 的控件绘制代码。
-- Designer 内置 `designer/src/designer_style.c`，实现 Windows 原生和 Fusion 外观；WinTk 风格不注册 painter，直接使用核心 GDI。
+- 内置风格作为 DLL 插件放在 `styles/`：`designer/build/styles/wintk_builtin_styles.dll`。Designer.exe 只保留插件加载器。
+- Designer 的“风格”菜单动态列出 `styles/*.dll` 中的插件；菜单末尾有“导入风格 DLL...”。
+- 内置 DLL 提供 Windows 原生和 Fusion；WinTk 风格是核心 GDI，不需要插件。
 - `WTK_STYLE_*` 和 `wtk_app_set_style()` 保留为兼容性“风格提示”，本身不会改变核心绘制；必须注册 painter 才有 Native/Fusion 效果。
 - `WtkStylePainter` 提供 `paint(widget, hdc, bounds, state)` 和可选的 `field_metrics(...)`；`state` 暴露控件类型、文本、字体、颜色、状态、值和尺寸。
 - `wtk_theme_default()` / `wtk_theme_fusion()` / `wtk_theme_native()` 提供 GDI 调色板；Designer 会切换到对应主题。
 - `WINTK_STYLE` 环境变量仍可作为提示使用，但没有 painter 时不会改变核心绘制。
 - 原生 EDIT / LISTBOX 始终由 Windows 绘制；painter 通过 `field_metrics` 控制其宿主内边距。
 
-Designer 的“风格”菜单提供 Windows 原生、Fusion 和 WinTk。窗口整体截图仍由 Gallery 展示原始 GDI 外观：[Gallery](docs/gallery-dashboard.png)；Designer 的原生外观：[Designer](docs/designer.png)。
+风格插件 ABI 在 `designer/styles/style_plugin.h`：DLL 导出 `wintk_style_plugin_get()`，返回 `WtkStylePlugin`；每个 `WtkStylePluginStyle` 提供 id、名称、兼容提示、主题和 painter。
+
+Designer 的“风格”菜单会列出所有加载到的插件。窗口整体截图仍由 Gallery 展示原始 GDI 外观：[Gallery](docs/gallery-dashboard.png)；Designer 的原生外观：[Designer](docs/designer.png)。
 
 ### 中文、Unicode 与输入法
 

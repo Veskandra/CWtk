@@ -11,10 +11,13 @@ WINDRES  := windres
 ROOT     := ..
 BUILD    := build
 OBJDIR   := $(BUILD)/obj
+STYLEDIR := $(BUILD)/styles
 EXE      := $(BUILD)/wintk_designer.exe
+STYLE_DLL:= $(STYLEDIR)/wintk_builtin_styles.dll
 RES      := $(BUILD)/wintk-res.o
 
-CPPFLAGS += -DUNICODE -D_UNICODE -I$(ROOT)/include -I$(ROOT)/src -Isrc
+CPPFLAGS += -DUNICODE -D_UNICODE -I$(ROOT)/include -I$(ROOT)/src -Isrc \
+	-Istyles
 CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS   += -finput-charset=UTF-8 -fexec-charset=UTF-8
@@ -29,27 +32,29 @@ LIB_SRCS := \
 	$(ROOT)/src/wtk_widgets.c
 
 LIB_OBJS := $(patsubst $(ROOT)/src/%.c,$(OBJDIR)/lib_%.o,$(LIB_SRCS))
-APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o \
-	$(OBJDIR)/designer_style.o
+APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o
+STYLE_OBJ := $(OBJDIR)/designer_style.o
 
 .PHONY: all clean run
 
-all: $(EXE)
+all: $(EXE) $(STYLE_DLL)
 
-$(BUILD) $(OBJDIR):
+$(BUILD) $(OBJDIR) $(STYLEDIR):
 	@if not exist "$@" mkdir "$@"
 
 $(OBJDIR)/lib_%.o: $(ROOT)/src/%.c $(ROOT)/src/wtk_internal.h $(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJDIR)/designer.o: src/designer.c src/designer_model.h $(ROOT)/include/wintk.h | $(OBJDIR)
+$(OBJDIR)/designer.o: src/designer.c src/designer_model.h \
+		styles/style_plugin.h $(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/designer_model.o: src/designer_model.c src/designer_model.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(OBJDIR)/designer_style.o: src/designer_style.c src/designer_style.h \
-		$(ROOT)/src/wtk_internal.h $(ROOT)/include/wintk.h | $(OBJDIR)
+$(OBJDIR)/designer_style.o: styles/designer_style.c styles/designer_style.h \
+		styles/style_plugin.h $(ROOT)/src/wtk_internal.h \
+		$(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(RES): $(ROOT)/resources/wintk.rc $(ROOT)/resources/wintk.manifest $(ROOT)/resources/wintk.ico | $(BUILD)
@@ -58,7 +63,11 @@ $(RES): $(ROOT)/resources/wintk.rc $(ROOT)/resources/wintk.manifest $(ROOT)/reso
 $(EXE): $(APP_OBJS) $(LIB_OBJS) $(RES) | $(BUILD)
 	$(CC) $(APP_OBJS) $(LIB_OBJS) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
-run: $(EXE)
+$(STYLE_DLL): $(STYLE_OBJ) $(LIB_OBJS) | $(STYLEDIR)
+	$(CC) -shared $(STYLE_OBJ) $(LIB_OBJS) -o $@ \
+		-static-libgcc -luser32 -lgdi32 -lcomctl32 -luxtheme
+
+run: $(EXE) $(STYLE_DLL)
 	@start "" "$(EXE)"
 
 clean:

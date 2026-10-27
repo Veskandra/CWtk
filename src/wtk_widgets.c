@@ -72,14 +72,23 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
     switch (type) {
     case WTK_TYPE_BUTTON:
         widget->focusable = 1;
-        widget->cursor = (app && app->style_resolved == WTK_STYLE_NATIVE)
-                             ? WTK_CURSOR_ARROW
-                             : WTK_CURSOR_HAND;
+        widget->cursor =
+            (app && (app->style_resolved == WTK_STYLE_NATIVE ||
+                     app->style_resolved == WTK_STYLE_FUSION))
+                ? WTK_CURSOR_ARROW
+                : WTK_CURSOR_HAND;
         widget->align = WTK_ALIGN_CENTER;
-        widget->pad_l = wtk__logical(app, 20);
-        widget->pad_r = wtk__logical(app, 20);
-        widget->pad_t = wtk__logical(app, 8);
-        widget->pad_b = wtk__logical(app, 8);
+        if (app && app->style_resolved == WTK_STYLE_FUSION) {
+            widget->pad_l = wtk__logical(app, 14);
+            widget->pad_r = wtk__logical(app, 14);
+            widget->pad_t = wtk__logical(app, 6);
+            widget->pad_b = wtk__logical(app, 6);
+        } else {
+            widget->pad_l = wtk__logical(app, 20);
+            widget->pad_r = wtk__logical(app, 20);
+            widget->pad_t = wtk__logical(app, 8);
+            widget->pad_b = wtk__logical(app, 8);
+        }
         break;
     case WTK_TYPE_ENTRY:
     case WTK_TYPE_TEXT:
@@ -959,6 +968,7 @@ void wtk_widget_set_border(WtkWidget *widget, WtkColor color, int width,
     widget->border_set = 1;
     widget->border_width = width > 0 ? wtk__logical(widget->app, width) : 0;
     widget->border_radius = radius >= 0 ? wtk__logical(widget->app, radius) : 0;
+    widget->radius_set = 1;
     wtk__request_relayout(widget);
     wtk__invalidate(widget);
 }

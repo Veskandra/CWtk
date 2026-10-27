@@ -2,7 +2,7 @@
 
 对应版本：1.0.0。公开头文件：`include/wintk.h`。
 
-所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。
+所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。默认视觉风格是 Qt Fusion 方向的 `WTK_STYLE_FUSION`；Windows 原生 UxTheme 和原 WinTk 自绘是可选风格。
 
 ---
 
@@ -83,7 +83,7 @@ typedef void (*WtkMenuFn)(WtkWidget *window, void *userdata);
 | `WtkSticky` | `WTK_STICKY_LEFT/TOP/RIGHT/BOTTOM`，`WTK_STICKY_HORIZONTAL/VERTICAL/ALL` |
 | `WtkAlign` | `WTK_ALIGN_LEFT/CENTER/RIGHT` |
 | `WtkButtonStyle` | `WTK_BUTTON_PRIMARY/SECONDARY/GHOST/DANGER` |
-| `WtkStyle` | `WTK_STYLE_AUTO/NATIVE/WINTK` |
+| `WtkStyle` | `WTK_STYLE_AUTO/FUSION/NATIVE/WINTK` |
 | `WtkCursor` | `WTK_CURSOR_ARROW/HAND/IBEAM/CROSS/SIZE_H/SIZE_V/SIZE_ALL/SIZE_NWSE/SIZE_NESW/NO` |
 | `WtkIcon` | `WTK_ICON_NONE/INFO/WARNING/ERROR/QUESTION` |
 | `WtkMouseButton` | `WTK_MOUSE_LEFT=1`, `WTK_MOUSE_RIGHT=2`, `WTK_MOUSE_MIDDLE=3` |
@@ -126,12 +126,17 @@ typedef struct WtkTheme {
     int control_height;  /* logical */
 } WtkTheme;
 
-void wtk_theme_default(WtkTheme *theme);
+void wtk_theme_default(WtkTheme *theme); /* 原 WinTk 调色板 */
+void wtk_theme_fusion(WtkTheme *theme);  /* 默认 Fusion 调色板 */
 void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme);
 const WtkTheme *wtk_app_get_theme(WtkApp *app);
 ```
 
-修改主题会重绘所有现有窗口，并更新原生输入控件的背景画刷。已经显式设置过的控件颜色不会被覆盖。`corner_radius` / `control_height` 只在创建控件时用于确定默认值。
+- `wtk_theme_default()` 是原 WinTk 风格的浅蓝/白色调色板。
+- `wtk_theme_fusion()` 是默认的 Qt Fusion 方向中性灰调色板：`#efefef` 窗口、白色输入框、`#308cc6` 选中色、3px 默认圆角。
+- 未显式调用 `wtk_app_set_theme()` 时，`wtk_app_new()` 会根据初始风格选用 Fusion 或 WinTk 调色板；之后切换风格也会同步刷新默认主题。
+- 修改主题会重绘所有现有窗口，并更新原生输入控件的背景画刷。已经显式设置过的控件颜色不会被覆盖。
+- `corner_radius` 会更新未显式指定圆角的控件；`control_height` 只在创建控件时用于确定默认尺寸。
 
 ---
 
@@ -159,9 +164,9 @@ const char *wtk_style_name(WtkStyle style);
 - 设置进程 DPI 感知。
 - 初始化 Common Controls。
 - 注册窗口类并创建隐藏的消息窗口。
-- 分配默认主题。
+- 根据初始视觉风格分配默认主题（Fusion 用 `wtk_theme_fusion()`，WinTk 用 `wtk_theme_default()`）。
 - 根据 Windows 界面语言选择默认 UI 字体，并缓存其 UTF-8 名称。
-- 读取可选的 `WINTK_STYLE` 环境变量；默认请求 `WTK_STYLE_AUTO`。
+- 读取可选的 `WINTK_STYLE` 环境变量；默认请求 `WTK_STYLE_AUTO`，解析为 Fusion。
 - 必须在任何 Win32 窗口创建前调用一次比较稳妥。
 
 ### wtk_run
@@ -180,19 +185,21 @@ const char *wtk_style_name(WtkStyle style);
 ### 视觉风格
 
 ```c
-wtk_app_set_style(app, WTK_STYLE_AUTO);
-wtk_app_set_style(app, WTK_STYLE_NATIVE);
-wtk_app_set_style(app, WTK_STYLE_WINTK);
+wtk_app_set_style(app, WTK_STYLE_AUTO);   /* 默认，解析为 Fusion */
+wtk_app_set_style(app, WTK_STYLE_FUSION); /* Qt Fusion 方向 */
+wtk_app_set_style(app, WTK_STYLE_NATIVE); /* Windows UxTheme */
+wtk_app_set_style(app, WTK_STYLE_WINTK);  /* 原 WinTk 自绘 */
 ```
 
-- `WTK_STYLE_AUTO` 是默认值；Windows 上解析为原生风格。
+- `WTK_STYLE_AUTO` 是默认值，解析为 `WTK_STYLE_FUSION`。
+- `WTK_STYLE_FUSION` 使用中性灰背景、白底方角输入框、扁平灰色按钮、细边框和蓝色选中，观感接近 Qt Widgets 的 Fusion 风格；它是 WinTk 的 GDI 实现，不依赖 Qt。
 - `WTK_STYLE_NATIVE` 用系统颜色和 UxTheme 绘制标准控件；原生 EDIT/LISTBOX 保持系统外观。
-- `WTK_STYLE_WINTK` 是原有的 WinTk 自绘风格。
-- `wtk_app_set_style()` 可以在窗口和控件创建后调用，会立即刷新现有控件并重新布局原生输入区。
+- `WTK_STYLE_WINTK` 是原有的圆角、主题色 WinTk 自绘风格。
+- `wtk_app_set_style()` 可以在窗口和控件创建后调用，会立即刷新现有控件、更新未显式指定的圆角，并在没有自定义主题时同步切换默认调色板；原生输入区会重新布局。
 - `wtk_app_get_style()` 返回请求值；`wtk_app_resolved_style()` 返回实际生效值。
-- `WINTK_STYLE` 环境变量可在启动前配置 `auto`、`native` 或 `wintk`（也接受 `classic`、`custom`、`system`）。
-- 原生风格仍保留 `WTK_BUTTON_PRIMARY` 的强调色和 `WTK_BUTTON_DANGER` 的危险色语义。
-- `WtkTheme` 主要影响 `WTK_STYLE_WINTK`；原生风格使用系统颜色，显式设置的控件颜色仍会保留。
+- `WINTK_STYLE` 环境变量可在启动前配置 `auto`、`fusion`、`qt`、`native` 或 `wintk`（也接受 `classic`、`custom`、`system`）。
+- Fusion 和 Native 仍保留 `WTK_BUTTON_PRIMARY` 的强调色和 `WTK_BUTTON_DANGER` 的危险色语义。
+- Fusion 默认使用 `wtk_theme_fusion()` 调色板；WinTk 默认使用 `wtk_theme_default()`；显式设置的控件颜色始终保留。
 
 ### 尺寸与字体辅助
 
@@ -204,7 +211,7 @@ wtk_app_set_style(app, WTK_STYLE_WINTK);
   - 日文和韩文系统优先对应的 CJK UI 字体；
   - 其他语言为 `Segoe UI`。
   - 字体是否可用会通过 GDI 字体枚举检查；不可用时回退到 `Segoe UI`。
-- `wtk_style_name(style)` 返回 `"Auto"`、`"Native"` 或 `"WinTk"`。
+- `wtk_style_name(style)` 返回 `"Auto"`、`"Fusion"`、`"Native"` 或 `"WinTk"`。
 
 ---
 
@@ -590,7 +597,7 @@ wtk_widget_set_font(widget, "Microsoft YaHei UI", 12, WTK_FONT_BOLD);
 
 ```c
 wtk_widget_set_background(card, theme->surface);
-wtk_widget_set_border(card, theme->border, 1, 12);
+wtk_widget_set_border(card, theme->border, 1, theme->corner_radius + 1);
 wtk_widget_set_padding(card, 20, 20, 20, 20);
 ```
 
@@ -686,7 +693,8 @@ build/libwintk.a
 - 不支持滚动容器和内容虚拟化。
 - `pack` 的混合方向布局与 Tk 的完整算法不完全相同。
 - `place` 只做固定坐标放置，不支持 anchor、比例尺寸或随父容器重排。
-- 原生风格用 UxTheme 绘制标准外观，但按钮、复选框等仍是 WinTk 宿主窗口；原生 EDIT/LISTBOX 才是独立系统控件子窗口。
+- Fusion 和 WinTk 用 GDI 绘制控件外观，Native 用 UxTheme 绘制；按钮、复选框等仍是 WinTk 宿主窗口，原生 EDIT/LISTBOX 才是独立系统控件子窗口。
+- 菜单、系统消息框和文件对话框始终使用 Windows 原生实现，不随 Fusion/WinTk 风格重绘。
 - 风格切换不会替换已经显式设置过的字体；需要完全统一的排版请在切换后重新设置字体。
 - 没有 per-monitor DPI 的实时重建；系统 DPI 在不同显示上可能看起来略有缩放差异。
 - 自绘控件使用 GDI，不支持 alpha 或硬件加速混合。

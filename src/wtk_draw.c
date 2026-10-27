@@ -420,6 +420,103 @@ static void paint_native_button(WtkWidget *widget, HDC dc,
     }
 }
 
+static void paint_fusion_button(WtkWidget *widget, HDC dc,
+                                const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    RECT content;
+    RECT highlight;
+    WtkColor base = theme->window_bg;
+    WtkColor hover = theme->surface_alt;
+    WtkColor pressed = wtk__shade(theme->surface_alt, -8);
+    WtkColor text = theme->text;
+    WtkColor border = theme->border;
+    int border_width = wtk__scale_widget(widget, 1);
+    int radius = wtk__scale_widget(widget, 3);
+
+    fill_rect(dc, rc, backdrop_color(widget));
+
+    switch (widget->button_style) {
+    case WTK_BUTTON_PRIMARY:
+        base = theme->accent;
+        hover = theme->accent_hover;
+        pressed = theme->accent_pressed;
+        text = theme->on_accent;
+        border = theme->accent;
+        border_width = 0;
+        break;
+    case WTK_BUTTON_DANGER:
+        base = theme->danger;
+        hover = wtk__shade(theme->danger, 10);
+        pressed = wtk__shade(theme->danger, -14);
+        text = theme->on_accent;
+        border = theme->danger;
+        border_width = 0;
+        break;
+    case WTK_BUTTON_GHOST:
+        base = backdrop_color(widget);
+        hover = theme->surface_alt;
+        pressed = wtk__shade(theme->surface_alt, -8);
+        text = theme->text;
+        border = base;
+        border_width = 0;
+        break;
+    case WTK_BUTTON_SECONDARY:
+    default:
+        break;
+    }
+
+    if (widget->bg_set) {
+        base = widget->bg;
+        hover = wtk__shade(base, 8);
+        pressed = wtk__shade(base, -8);
+        border = wtk__shade(base, -12);
+    }
+    if (widget->fg_set)
+        text = widget->fg;
+    if (widget->border_set) {
+        border = widget->border;
+        border_width = widget->border_width;
+    }
+    if (!widget->enabled) {
+        base = theme->surface_alt;
+        hover = base;
+        pressed = base;
+        text = theme->muted;
+        border = theme->border;
+        border_width = wtk__scale_widget(widget, 1);
+    }
+    if (widget->pressed)
+        base = pressed;
+    else if (widget->hover)
+        base = hover;
+
+    draw_round_rect(dc, rc, radius, 1, base, border_width, border);
+
+    if (widget->enabled && !widget->pressed && !widget->bg_set &&
+        widget->button_style == WTK_BUTTON_SECONDARY) {
+        highlight = rc;
+        highlight.left += radius;
+        highlight.right -= radius;
+        highlight.top += wtk__scale_widget(widget, 1);
+        highlight.bottom = highlight.top + wtk__scale_widget(widget, 1);
+        if (highlight.right > highlight.left)
+            fill_rect(dc, highlight, wtk__shade(base, 10));
+    }
+
+    content = rc;
+    content.left += widget->pad_l;
+    content.right -= widget->pad_r;
+    content.top += widget->pad_t;
+    content.bottom -= widget->pad_b;
+    draw_text_single(dc, widget->font, text,
+                     widget->text ? widget->text : L"", content,
+                     widget->align, 1);
+    if (widget->focused)
+        draw_focus_rect(dc, rc);
+}
+
 static void paint_button(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkColor backdrop = backdrop_color(widget);
@@ -433,6 +530,10 @@ static void paint_button(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_button(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_button(widget, dc, bounds);
         return;
     }
 
@@ -580,6 +681,77 @@ static void paint_native_radio(WtkWidget *widget, HDC dc,
         draw_focus_rect(dc, rc);
 }
 
+static void paint_fusion_checkbox(WtkWidget *widget, HDC dc,
+                                  const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    RECT box;
+    RECT text_rect;
+    int box_size = wtk__scale_widget(widget, 14);
+    int gap = wtk__scale_widget(widget, 6);
+    int box_left;
+    int box_top;
+    WtkColor fg = widget->fg_set ? widget->fg
+                                 : (widget->enabled ? theme->text
+                                                    : theme->muted);
+    WtkColor fill = theme->surface;
+    WtkColor border = theme->border;
+    int border_width = wtk__scale_widget(widget, 1);
+
+    fill_rect(dc, rc, backdrop_color(widget));
+
+    box_left = rc.left + widget->pad_l;
+    box_top = rc.top + (rc.bottom - rc.top - box_size) / 2;
+    box.left = box_left;
+    box.top = box_top;
+    box.right = box_left + box_size;
+    box.bottom = box_top + box_size;
+
+    if (widget->checked && widget->enabled) {
+        fill = theme->accent;
+        border = theme->accent;
+    } else if (!widget->enabled) {
+        fill = theme->surface_alt;
+        border = theme->border;
+    } else if (widget->hover || widget->focused) {
+        border = theme->accent;
+    }
+
+    draw_round_rect(dc, box, wtk__scale_widget(widget, 2), 1, fill,
+                    border_width, border);
+
+    if (widget->checked) {
+        HPEN pen = CreatePen(PS_SOLID,
+                             wtk__scale_widget(widget, 2),
+                             wtk__colorref(widget->enabled
+                                               ? theme->on_accent
+                                               : theme->muted));
+        HGDIOBJ old = SelectObject(dc, pen);
+        POINT pts[3];
+        pts[0].x = box.left + box_size * 24 / 100;
+        pts[0].y = box.top + box_size * 50 / 100;
+        pts[1].x = box.left + box_size * 42 / 100;
+        pts[1].y = box.top + box_size * 68 / 100;
+        pts[2].x = box.left + box_size * 76 / 100;
+        pts[2].y = box.top + box_size * 30 / 100;
+        Polyline(dc, pts, 3);
+        SelectObject(dc, old);
+        DeleteObject(pen);
+    }
+
+    text_rect = rc;
+    text_rect.left = box.right + gap;
+    text_rect.right -= widget->pad_r;
+    text_rect.top += widget->pad_t;
+    text_rect.bottom -= widget->pad_b;
+    draw_text_single(dc, widget->font, fg,
+                     widget->text ? widget->text : L"", text_rect,
+                     WTK_ALIGN_LEFT, 1);
+    if (widget->focused)
+        draw_focus_rect(dc, rc);
+}
+
 static void paint_checkbox(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkApp *app = widget->app;
@@ -598,6 +770,10 @@ static void paint_checkbox(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_checkbox(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_checkbox(widget, dc, bounds);
         return;
     }
     fill_rect(dc, rc, backdrop_color(widget));
@@ -655,6 +831,64 @@ static void paint_checkbox(WtkWidget *widget, HDC dc, const RECT *bounds)
         draw_focus_rect(dc, rc);
 }
 
+static void paint_fusion_radio(WtkWidget *widget, HDC dc,
+                               const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    RECT circle;
+    RECT inner;
+    RECT text_rect;
+    int size = wtk__scale_widget(widget, 14);
+    int gap = wtk__scale_widget(widget, 6);
+    int left = rc.left + widget->pad_l;
+    int top = rc.top + (rc.bottom - rc.top - size) / 2;
+    int selected = wtk__radio_selected(widget);
+    WtkColor fg = widget->fg_set ? widget->fg
+                                 : (widget->enabled ? theme->text
+                                                    : theme->muted);
+    WtkColor border = theme->border;
+    int border_width = wtk__scale_widget(widget, 1);
+
+    fill_rect(dc, rc, backdrop_color(widget));
+
+    circle.left = left;
+    circle.top = top;
+    circle.right = left + size;
+    circle.bottom = top + size;
+
+    if (!widget->enabled)
+        border = theme->border;
+    else if (widget->hover || widget->focused || selected)
+        border = theme->accent;
+
+    draw_ellipse(dc, circle, 1,
+                 widget->enabled ? theme->surface : theme->surface_alt,
+                 border_width, border);
+
+    if (selected) {
+        int inset = size * 30 / 100;
+        inner.left = circle.left + inset;
+        inner.top = circle.top + inset;
+        inner.right = circle.right - inset;
+        inner.bottom = circle.bottom - inset;
+        draw_ellipse(dc, inner, 1,
+                     widget->enabled ? theme->accent : theme->muted, 0,
+                     theme->accent);
+    }
+
+    text_rect = rc;
+    text_rect.left = circle.right + gap;
+    text_rect.right -= widget->pad_r;
+    text_rect.top += widget->pad_t;
+    text_rect.bottom -= widget->pad_b;
+    draw_text_single(dc, widget->font, fg,
+                     widget->text ? widget->text : L"", text_rect,
+                     WTK_ALIGN_LEFT, 1);
+    if (widget->focused)
+        draw_focus_rect(dc, rc);
+}
+
 static void paint_radio(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkApp *app = widget->app;
@@ -674,6 +908,10 @@ static void paint_radio(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_radio(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_radio(widget, dc, bounds);
         return;
     }
 
@@ -746,6 +984,29 @@ static void paint_native_field(WtkWidget *widget, HDC dc,
     }
 }
 
+static void paint_fusion_field(WtkWidget *widget, HDC dc,
+                               const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    WtkColor field_bg = wtk__field_bg(widget);
+    WtkColor border = theme->border;
+    int border_width = wtk__scale_widget(widget, 1);
+
+    fill_rect(dc, rc, backdrop_color(widget));
+
+    if (!widget->enabled) {
+        border = theme->border;
+    } else if (widget->focused) {
+        border = theme->accent;
+    } else if (widget->border_set) {
+        border = widget->border;
+        border_width = widget->border_width;
+    }
+
+    draw_round_rect(dc, rc, 0, 1, field_bg, border_width, border);
+}
+
 static void paint_field(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkApp *app = widget->app;
@@ -759,6 +1020,10 @@ static void paint_field(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_field(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_field(widget, dc, bounds);
         return;
     }
 
@@ -858,6 +1123,56 @@ static void paint_native_slider(WtkWidget *widget, HDC dc,
         DrawFocusRect(dc, &thumb);
 }
 
+static void paint_fusion_slider(WtkWidget *widget, HDC dc,
+                                const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    int thumb_radius = wtk__scale_widget(widget, 7);
+    int left = rc.left + thumb_radius;
+    int right = rc.right - thumb_radius;
+    int center_y = (rc.top + rc.bottom) / 2;
+    int track_height = wtk__scale_widget(widget, 4);
+    int value_range = widget->value_max - widget->value_min;
+    double fraction = 0.0;
+    int thumb_x;
+    RECT track;
+    RECT thumb;
+
+    fill_rect(dc, rc, backdrop_color(widget));
+    if (right <= left)
+        return;
+    if (value_range > 0)
+        fraction = (double)(widget->value - widget->value_min) / value_range;
+    if (fraction < 0.0)
+        fraction = 0.0;
+    if (fraction > 1.0)
+        fraction = 1.0;
+    thumb_x = left + (int)((right - left) * fraction + 0.5);
+
+    track.left = left;
+    track.right = right;
+    track.top = center_y - track_height / 2;
+    track.bottom = center_y + (track_height + 1) / 2;
+    draw_round_rect(dc, track, track_height / 2, 1,
+                    wtk__shade(theme->surface_alt, -12), 0,
+                    wtk__shade(theme->surface_alt, -12));
+
+    thumb.left = thumb_x - thumb_radius;
+    thumb.top = center_y - thumb_radius;
+    thumb.right = thumb_x + thumb_radius + 1;
+    thumb.bottom = center_y + thumb_radius + 1;
+    draw_ellipse(dc, thumb, 1,
+                 widget->enabled ? theme->surface_alt
+                                 : theme->surface,
+                 wtk__scale_widget(widget, 1),
+                 widget->hover || widget->pressed
+                     ? theme->accent
+                     : theme->muted);
+    if (widget->focused && widget->focus_ring)
+        draw_focus_rect(dc, rc);
+}
+
 static void paint_slider(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkApp *app = widget->app;
@@ -878,6 +1193,10 @@ static void paint_slider(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_slider(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_slider(widget, dc, bounds);
         return;
     }
 
@@ -965,6 +1284,54 @@ static void paint_native_progress(WtkWidget *widget, HDC dc,
     }
 }
 
+static void paint_fusion_progress(WtkWidget *widget, HDC dc,
+                                  const RECT *bounds)
+{
+    WtkTheme *theme = &widget->app->theme;
+    RECT rc = *bounds;
+    RECT track;
+    RECT fill_track;
+    double fraction = widget->progress;
+
+    if (fraction < 0.0)
+        fraction = 0.0;
+    if (fraction > 1.0)
+        fraction = 1.0;
+    fill_rect(dc, rc, backdrop_color(widget));
+
+    track = rc;
+    if (widget->show_percent) {
+        int height = wtk__scale_widget(widget, 12);
+        if (height > (rc.bottom - rc.top) / 2)
+            height = (rc.bottom - rc.top) / 2;
+        track.bottom = track.top + height;
+    }
+
+    draw_round_rect(dc, track, wtk__scale_widget(widget, 2), 1,
+                    theme->surface_alt, wtk__scale_widget(widget, 1),
+                    theme->border);
+
+    fill_track = track;
+    fill_track.right = track.left +
+                       (int)((track.right - track.left) * fraction + 0.5);
+    if (fill_track.right > fill_track.left) {
+        draw_round_rect(dc, fill_track, wtk__scale_widget(widget, 2), 1,
+                        widget->enabled ? theme->accent : theme->muted, 0,
+                        theme->accent);
+    }
+
+    if (widget->show_percent) {
+        WCHAR number[16];
+        RECT text_rect = rc;
+        int percent = (int)(fraction * 100.0 + 0.5);
+        text_rect.top = track.bottom + wtk__scale_widget(widget, 2);
+        swprintf(number, sizeof(number) / sizeof(number[0]), L"%d%%",
+                 percent);
+        draw_text_single(dc, widget->font, theme->text, number, text_rect,
+                         WTK_ALIGN_CENTER, 0);
+    }
+}
+
 static void paint_progress(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkApp *app = widget->app;
@@ -977,6 +1344,10 @@ static void paint_progress(WtkWidget *widget, HDC dc, const RECT *bounds)
 
     if (wtk__style_is_native(widget)) {
         paint_native_progress(widget, dc, bounds);
+        return;
+    }
+    if (wtk__style_is_fusion(widget)) {
+        paint_fusion_progress(widget, dc, bounds);
         return;
     }
 
@@ -1057,17 +1428,24 @@ static void paint_canvas(WtkWidget *widget, HDC dc, const RECT *bounds)
     }
     if (widget->focused && widget->focus_ring) {
         RECT rc = *bounds;
-        WtkColor color = wtk__style_is_native(widget)
-                             ? wtk__system_color(COLOR_HIGHLIGHT)
-                             : widget->app->theme.accent;
-        HPEN pen = CreatePen(PS_SOLID, wtk__scale_widget(widget, 1),
-                             wtk__colorref(color));
-        HGDIOBJ old_pen = SelectObject(dc, pen);
-        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1);
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(pen);
+        if (wtk__style_is_fusion(widget)) {
+            InflateRect(&rc, -2, -2);
+            DrawFocusRect(dc, &rc);
+        } else {
+            WtkColor color = wtk__style_is_native(widget)
+                                 ? wtk__system_color(COLOR_HIGHLIGHT)
+                                 : widget->app->theme.accent;
+            HPEN pen = CreatePen(PS_SOLID, wtk__scale_widget(widget, 1),
+                                 wtk__colorref(color));
+            HGDIOBJ old_pen = SelectObject(dc, pen);
+            HGDIOBJ old_brush =
+                SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Rectangle(dc, rc.left + 1, rc.top + 1, rc.right - 1,
+                      rc.bottom - 1);
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(pen);
+        }
     }
 }
 

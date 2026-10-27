@@ -159,6 +159,12 @@ int wtk__style_is_native(WtkWidget *widget)
            widget->app->style_resolved == WTK_STYLE_NATIVE;
 }
 
+int wtk__style_is_fusion(WtkWidget *widget)
+{
+    return widget && widget->app &&
+           widget->app->style_resolved == WTK_STYLE_FUSION;
+}
+
 WtkColor wtk__system_color(int index)
 {
     COLORREF color = GetSysColor(index);
@@ -271,6 +277,29 @@ void wtk_theme_default(WtkTheme *theme)
     theme->danger = WTK_RGB(220, 61, 67);
     theme->corner_radius = 10;
     theme->control_height = 40;
+}
+
+void wtk_theme_fusion(WtkTheme *theme)
+{
+    if (!theme)
+        return;
+
+    memset(theme, 0, sizeof(*theme));
+    theme->window_bg = WTK_RGB(239, 239, 239);
+    theme->surface = WTK_RGB(255, 255, 255);
+    theme->surface_alt = WTK_RGB(247, 247, 247);
+    theme->text = WTK_RGB(26, 26, 26);
+    theme->muted = WTK_RGB(112, 112, 112);
+    theme->border = WTK_RGB(189, 189, 189);
+    theme->accent = WTK_RGB(48, 140, 198);
+    theme->accent_hover = WTK_RGB(64, 156, 214);
+    theme->accent_pressed = WTK_RGB(37, 116, 167);
+    theme->on_accent = WTK_RGB(255, 255, 255);
+    theme->success = WTK_RGB(46, 139, 87);
+    theme->warning = WTK_RGB(214, 144, 0);
+    theme->danger = WTK_RGB(192, 57, 43);
+    theme->corner_radius = 3;
+    theme->control_height = 30;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -512,16 +541,29 @@ static WtkStyle style_from_environment(void)
         return WTK_STYLE_WINTK;
     if (wcscmp(value, L"native") == 0 || wcscmp(value, L"system") == 0)
         return WTK_STYLE_NATIVE;
+    if (wcscmp(value, L"fusion") == 0 || wcscmp(value, L"qt") == 0 ||
+        wcscmp(value, L"qtfusion") == 0)
+        return WTK_STYLE_FUSION;
     return WTK_STYLE_AUTO;
 }
 
 static WtkStyle resolve_style(WtkStyle requested)
 {
-    /* AUTO means the native Windows presentation. The fallback path in the
-     * painter uses classic Win32 colors if UxTheme is unavailable. */
+    /* AUTO is the neutral Qt-Fusion-like default. NATIVE remains an explicit
+     * opt-in for the UxTheme presentation. */
     if (requested == WTK_STYLE_AUTO)
-        return WTK_STYLE_NATIVE;
+        return WTK_STYLE_FUSION;
     return requested;
+}
+
+static void apply_default_theme(WtkApp *app)
+{
+    if (!app)
+        return;
+    if (app->style_resolved == WTK_STYLE_WINTK)
+        wtk_theme_default(&app->theme);
+    else
+        wtk_theme_fusion(&app->theme);
 }
 
 static void open_theme_handles(WtkApp *app)
@@ -566,7 +608,8 @@ static void refresh_style_tree(WtkWidget *widget)
         wtk__native_position(widget);
     }
     if (widget->type == WTK_TYPE_BUTTON && !widget->cursor_set)
-        widget->cursor = wtk__style_is_native(widget)
+        widget->cursor = wtk__style_is_native(widget) ||
+                                 wtk__style_is_fusion(widget)
                              ? WTK_CURSOR_ARROW
                              : WTK_CURSOR_HAND;
     wtk__invalidate(widget);
@@ -603,7 +646,8 @@ WtkApp *wtk_app_new(void)
     app->next_timer_id = 1;
     app->style_requested = style_from_environment();
     app->style_resolved = resolve_style(app->style_requested);
-    wtk_theme_default(&app->theme);
+    app->theme_custom = 0;
+    apply_default_theme(app);
     wcsncpy(app->ui_font_family, choose_ui_font_family(),
             LF_FACESIZE - 1);
     app->ui_font_family[LF_FACESIZE - 1] = L'\0';
@@ -690,17 +734,32 @@ static void refresh_theme_tree(WtkWidget *widget)
         refresh_theme_tree(widget->children[i]);
 }
 
+static void apply_theme_radii(WtkWidget *widget)
+{
+    int i;
+    if (!widget)
+        return;
+    if (!widget->radius_set) {
+        widget->border_radius =
+            wtk__logical(widget->app, widget->app->theme.corner_radius);
+    }
+    for (i = 0; i < widget->child_count; ++i)
+        apply_theme_radii(widget->children[i]);
+}
+
 void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme)
 {
     int i;
     if (!app || !theme)
         return;
     app->theme = *theme;
+    app->theme_custom = 1;
 
     for (i = 0; i < app->window_count; ++i) {
         WtkWidget *window = app->windows[i];
         if (!window->hwnd)
             continue;
+        apply_theme_radii(window);
         refresh_theme_tree(window);
         RedrawWindow(window->hwnd, NULL, NULL,
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -718,15 +777,18 @@ void wtk_app_set_style(WtkApp *app, WtkStyle style)
     if (!app)
         return;
     if (style != WTK_STYLE_AUTO && style != WTK_STYLE_NATIVE &&
-        style != WTK_STYLE_WINTK)
+        style != WTK_STYLE_WINTK && style != WTK_STYLE_FUSION)
         style = WTK_STYLE_AUTO;
     app->style_requested = style;
     app->style_resolved = resolve_style(style);
+    if (!app->theme_custom)
+        apply_default_theme(app);
 
     for (i = 0; i < app->window_count; ++i) {
         WtkWidget *window = app->windows[i];
         if (!window->hwnd)
             continue;
+        apply_theme_radii(window);
         refresh_style_tree(window);
         wtk__layout_window(window);
         RedrawWindow(window->hwnd, NULL, NULL,
@@ -741,7 +803,7 @@ WtkStyle wtk_app_get_style(WtkApp *app)
 
 WtkStyle wtk_app_resolved_style(WtkApp *app)
 {
-    return app ? app->style_resolved : WTK_STYLE_NATIVE;
+    return app ? app->style_resolved : WTK_STYLE_FUSION;
 }
 
 const char *wtk_style_name(WtkStyle style)
@@ -751,6 +813,8 @@ const char *wtk_style_name(WtkStyle style)
         return "Native";
     case WTK_STYLE_WINTK:
         return "WinTk";
+    case WTK_STYLE_FUSION:
+        return "Fusion";
     case WTK_STYLE_AUTO:
     default:
         return "Auto";

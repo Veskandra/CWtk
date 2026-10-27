@@ -284,6 +284,10 @@ void wtk__native_position(WtkWidget *widget)
         inset_y = wtk__scale_widget(widget, 2);
         if (widget->type == WTK_TYPE_ENTRY)
             inset_y = wtk__scale_widget(widget, 2);
+    } else if (wtk__style_is_fusion(widget)) {
+        inset_x = wtk__scale_widget(widget, 4);
+        inset_y = wtk__scale_widget(widget,
+                                    widget->type == WTK_TYPE_ENTRY ? 2 : 4);
     } else if (widget->type == WTK_TYPE_ENTRY) {
         inset_x = wtk__scale_widget(widget, 7);
         inset_y = wtk__scale_widget(widget, 3);
@@ -303,7 +307,9 @@ void wtk__native_position(WtkWidget *widget)
         widget->type == WTK_TYPE_TEXT) {
         int margin = wtk__style_is_native(widget)
                          ? wtk__scale_widget(widget, 3)
-                         : wtk__scale_widget(widget, 5);
+                         : (wtk__style_is_fusion(widget)
+                                ? wtk__scale_widget(widget, 4)
+                                : wtk__scale_widget(widget, 5));
         SendMessageW(widget->input, EM_SETMARGINS,
                      EC_LEFTMARGIN | EC_RIGHTMARGIN,
                      MAKELPARAM(margin, margin));

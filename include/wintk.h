@@ -118,14 +118,15 @@ typedef enum WtkCursor {
 
 /* Visual style of the built-in widgets.
  *
- * AUTO (the default) follows the native Windows presentation: system colors,
- * system font and UxTheme-drawn controls. WINTK is the original custom look.
- * The environment variable WINTK_STYLE can be set to auto, native or wintk
- * before creating the app to choose a default without changing code. */
+ * AUTO (the default) resolves to FUSION, a neutral Qt-Fusion-like presentation.
+ * NATIVE is the Windows UxTheme presentation and WINTK is the original custom
+ * look. The environment variable WINTK_STYLE can be set to auto, fusion (or
+ * qt), native or wintk before creating the app to choose a default. */
 typedef enum WtkStyle {
     WTK_STYLE_AUTO = 0,
     WTK_STYLE_NATIVE,
-    WTK_STYLE_WINTK
+    WTK_STYLE_WINTK,
+    WTK_STYLE_FUSION
 } WtkStyle;
 
 typedef enum WtkIcon {
@@ -221,8 +222,10 @@ typedef struct WtkTheme {
     int control_height;   /* Logical pixels. */
 } WtkTheme;
 
-/* Fill a theme with WinTk's built-in light palette. */
+/* Fill a theme with WinTk's original light palette (the WinTk style). */
 void wtk_theme_default(WtkTheme *theme);
+/* Fill a theme with the neutral Qt-Fusion-like palette used by default. */
+void wtk_theme_fusion(WtkTheme *theme);
 
 /* ------------------------------------------------------------------------- */
 /* Application                                                               */

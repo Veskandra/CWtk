@@ -87,6 +87,7 @@ struct WtkApp {
 
     WtkStyle style_requested;
     WtkStyle style_resolved;
+    int theme_custom;
     HTHEME theme_button;
     HTHEME theme_edit;
     HTHEME theme_listbox;
@@ -147,6 +148,7 @@ struct WtkWidget {
     int bg_set;
     int fg_set;
     int border_set;
+    int radius_set;
     int border_width;          /* Device pixels. */
     int border_radius;         /* Device pixels. */
 
@@ -254,6 +256,7 @@ WtkColor wtk__shade(WtkColor color, int percent);
 int wtk__logical(WtkApp *app, int pixels);
 int wtk__scale_widget(WtkWidget *widget, int pixels);
 int wtk__style_is_native(WtkWidget *widget);
+int wtk__style_is_fusion(WtkWidget *widget);
 WtkColor wtk__system_color(int index);
 HTHEME wtk__theme_button(WtkWidget *widget);
 HTHEME wtk__theme_edit(WtkWidget *widget);

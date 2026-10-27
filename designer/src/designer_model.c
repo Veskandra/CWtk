@@ -632,6 +632,8 @@ int designer_generate_c(const DesignDoc *doc, char *buffer, size_t capacity)
         code_append(&out, "WTK_STYLE_NATIVE");
     else if (doc->style == 2)
         code_append(&out, "WTK_STYLE_WINTK");
+    else if (doc->style == 3)
+        code_append(&out, "WTK_STYLE_FUSION");
     else
         code_append(&out, "WTK_STYLE_AUTO");
     code_append(&out,

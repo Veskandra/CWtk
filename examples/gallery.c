@@ -66,8 +66,8 @@ static const char *PAGE_TITLES[4] = {
 };
 
 static const char *PAGE_SUBTITLES[4] = {
-    "一个紧凑的 C API，托起完整的原生界面。",
-    "原生控件、自绘外观与统一的事件模型。",
+    "一个紧凑的 C API，托起完整的桌面界面。",
+    "Qt Fusion 风格、原生输入控件与统一的事件模型。",
     "双缓冲 GDI 画布，支持鼠标、悬停与绘制回调。",
     "这个轻量框架背后的设计取舍。"
 };
@@ -114,7 +114,8 @@ static WtkWidget *new_card(WtkWidget *parent, int padding)
     WtkApp *app = wtk_widget_app(card);
     const WtkTheme *theme = wtk_app_get_theme(app);
     wtk_widget_set_background(card, theme->surface);
-    wtk_widget_set_border(card, theme->border, 1, 12);
+    wtk_widget_set_border(card, theme->border, 1,
+                          theme->corner_radius + 1);
     wtk_widget_set_padding(card, padding, padding, padding, padding);
     return card;
 }
@@ -161,7 +162,7 @@ static void switch_page(GalleryState *state, int index)
                                         : WTK_BUTTON_GHOST);
         wtk_widget_set_foreground(state->nav[i],
                                   i == index ? state->theme->on_accent
-                                             : WTK_RGB(64, 78, 100));
+                                             : state->theme->text);
     }
     wtk_label_set_text(state->page_title, PAGE_TITLES[index]);
     wtk_label_set_text(state->page_subtitle, PAGE_SUBTITLES[index]);
@@ -184,24 +185,32 @@ static void on_about_click(WtkWidget *widget, WtkEvent *event, void *userdata)
 
 static void gallery_update_style_button(GalleryState *state)
 {
+    const char *label = "风格：Fusion";
+    WtkStyle style;
     if (!state || !state->style_button)
         return;
-    wtk_button_set_text(
-        state->style_button,
-        wtk_app_resolved_style(state->app) == WTK_STYLE_WINTK
-            ? "风格：WinTk"
-            : "风格：原生");
+    style = wtk_app_resolved_style(state->app);
+    if (style == WTK_STYLE_WINTK)
+        label = "风格：WinTk";
+    else if (style == WTK_STYLE_NATIVE)
+        label = "风格：Windows";
+    wtk_button_set_text(state->style_button, label);
 }
 
 static void on_style_click(WtkWidget *widget, WtkEvent *event, void *userdata)
 {
     GalleryState *state = (GalleryState *)userdata;
+    WtkStyle style;
     WtkStyle next;
     (void)widget;
     (void)event;
-    next = wtk_app_resolved_style(state->app) == WTK_STYLE_NATIVE
-               ? WTK_STYLE_WINTK
-               : WTK_STYLE_AUTO;
+    style = wtk_app_resolved_style(state->app);
+    if (style == WTK_STYLE_FUSION)
+        next = WTK_STYLE_NATIVE;
+    else if (style == WTK_STYLE_NATIVE)
+        next = WTK_STYLE_WINTK;
+    else
+        next = WTK_STYLE_FUSION;
     wtk_app_set_style(state->app, next);
     gallery_update_style_button(state);
 }
@@ -226,7 +235,7 @@ static void build_sidebar(GalleryState *state, WtkWidget *window)
     };
 
     wtk_widget_set_size(sidebar, 232, 0);
-    wtk_widget_set_background(sidebar, WTK_RGB(240, 244, 251));
+    wtk_widget_set_background(sidebar, theme->surface_alt);
     wtk_widget_set_padding(sidebar, 20, 24, 20, 20);
     wtk_pack(sidebar, WTK_SIDE_LEFT, WTK_FILL_Y, 0, 0, 0);
 
@@ -245,7 +254,7 @@ static void build_sidebar(GalleryState *state, WtkWidget *window)
         wtk_button_set_style(button, i == 0 ? WTK_BUTTON_PRIMARY
                                             : WTK_BUTTON_GHOST);
         wtk_widget_set_foreground(button, i == 0 ? theme->on_accent
-                                                 : WTK_RGB(64, 78, 100));
+                                                 : theme->text);
         wtk_widget_set_font(button, NULL, 10, WTK_FONT_BOLD);
         wtk_widget_set_padding(button, 14, 8, 14, 8);
         wtk_pack(button, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 3);
@@ -273,7 +282,7 @@ static void build_header(GalleryState *state, WtkWidget *main)
     const WtkTheme *theme = state->theme;
     WtkWidget *header = wtk_frame(main);
     WtkWidget *actions = wtk_frame(header);
-    WtkWidget *style = wtk_button(actions, "风格：原生");
+    WtkWidget *style = wtk_button(actions, "风格：Fusion");
     WtkWidget *about = wtk_button(actions, "关于");
     WtkWidget *titles = wtk_frame(header);
 
@@ -474,8 +483,8 @@ static void build_dashboard(GalleryState *state, WtkWidget *page)
 
     native = new_card(lower, 20);
     wtk_grid(native, 0, 1, 1, 1, WTK_STICKY_ALL, 5, 0);
-    add_card_heading(native, state, "原生状态",
-                     "自绘滑块驱动下方进度条。");
+    add_card_heading(native, state, "交互状态",
+                     "拖动滑块，驱动下方进度条。");
 
     value_label = new_label(native, "音量：35%", 11, WTK_FONT_BOLD,
                             theme->text);
@@ -645,7 +654,7 @@ static void build_widgets_page(GalleryState *state, WtkWidget *page)
     /* Inputs / events. */
     card = cards[0];
     add_card_heading(card, state, "文本输入",
-                     "原生 EDIT 控件，套用自绘圆角宿主。");
+                     "原生 EDIT 控件，Fusion 扁平边框。");
     state->signin_name = wtk_entry(card);
     wtk_entry_set_placeholder(state->signin_name, "你的名字");
     wtk_pack(state->signin_name, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 12);
@@ -701,7 +710,7 @@ static void build_widgets_page(GalleryState *state, WtkWidget *page)
     /* Listbox. */
     card = cards[2];
     add_card_heading(card, state, "列表框",
-                     "原生列表控件，使用 WinTk 焦点样式。");
+                     "原生列表控件，Fusion 扁平边框。");
     list = wtk_listbox(card);
     state->list = list;
     wtk_listbox_add(list, "北京");
@@ -784,10 +793,20 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
     WCHAR value_text[16];
     RECT label_rect;
     double max_value = 100.0;
+    COLORREF accent;
+    COLORREF muted;
+    COLORREF grid = RGB(226, 226, 226);
+    COLORREF area_color = RGB(235, 244, 250);
 
     (void)canvas;
     if (!state || !state->chart_font || width <= 0 || height <= 0)
         return;
+    accent = RGB((state->theme->accent >> 16) & 0xFF,
+                 (state->theme->accent >> 8) & 0xFF,
+                 state->theme->accent & 0xFF);
+    muted = RGB((state->theme->muted >> 16) & 0xFF,
+                (state->theme->muted >> 8) & 0xFF,
+                state->theme->muted & 0xFF);
 
     plot_w = width - margin_left - margin_right;
     plot_h = height - margin_top - margin_bottom;
@@ -796,7 +815,7 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
 
     SetBkMode(dc, TRANSPARENT);
     old_font = SelectObject(dc, state->chart_font);
-    SetTextColor(dc, RGB(112, 123, 140));
+    SetTextColor(dc, muted);
 
     /* Area under the line. */
     area[0].x = margin_left;
@@ -810,10 +829,10 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
     area[11].x = margin_left + plot_w;
     area[11].y = margin_top + plot_h;
 
-    area_brush = CreateSolidBrush(RGB(235, 241, 255));
+    area_brush = CreateSolidBrush(area_color);
     old_brush = SelectObject(dc, area_brush);
     {
-        HPEN area_pen = CreatePen(PS_SOLID, 1, RGB(235, 241, 255));
+        HPEN area_pen = CreatePen(PS_SOLID, 1, area_color);
         HGDIOBJ old_area_pen = SelectObject(dc, area_pen);
         Polygon(dc, area, 12);
         SelectObject(dc, old_area_pen);
@@ -823,7 +842,7 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
     DeleteObject(area_brush);
 
     /* Grid over the area. */
-    grid_pen = CreatePen(PS_SOLID, 1, RGB(223, 230, 242));
+    grid_pen = CreatePen(PS_SOLID, 1, grid);
     old_pen = SelectObject(dc, grid_pen);
     for (i = 0; i <= 4; ++i) {
         int y = margin_top + plot_h * i / 4;
@@ -841,13 +860,13 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
     SelectObject(dc, old_pen);
     DeleteObject(grid_pen);
 
-    accent_pen = CreatePen(PS_SOLID, MulDiv(3, scale, 96), RGB(45, 91, 255));
+    accent_pen = CreatePen(PS_SOLID, MulDiv(3, scale, 96), accent);
     old_pen = SelectObject(dc, accent_pen);
     Polyline(dc, line, 10);
     SelectObject(dc, old_pen);
     DeleteObject(accent_pen);
 
-    point_pen = CreatePen(PS_SOLID, MulDiv(2, scale, 96), RGB(45, 91, 255));
+    point_pen = CreatePen(PS_SOLID, MulDiv(2, scale, 96), accent);
     point_brush = CreateSolidBrush(RGB(255, 255, 255));
     old_pen = SelectObject(dc, point_pen);
     old_brush = SelectObject(dc, point_brush);
@@ -857,13 +876,13 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
         int center_x = line[i].x;
         int center_y = line[i].y;
         if (i == state->chart_hover) {
-            HBRUSH hover = CreateSolidBrush(RGB(45, 91, 255));
+            HBRUSH hover = CreateSolidBrush(accent);
             HGDIOBJ old_hover = SelectObject(dc, hover);
             Ellipse(dc, center_x - r, center_y - r, center_x + r + 1,
                     center_y + r + 1);
             SelectObject(dc, old_hover);
             DeleteObject(hover);
-            SetTextColor(dc, RGB(45, 91, 255));
+            SetTextColor(dc, accent);
             swprintf(value_text,
                      sizeof(value_text) / sizeof(value_text[0]), L"%d",
                      (int)(state->chart[i] + 0.5));
@@ -873,7 +892,7 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
             label_rect.bottom = center_y - r - MulDiv(2, scale, 96);
             DrawTextW(dc, value_text, -1, &label_rect,
                       DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-            SetTextColor(dc, RGB(112, 123, 140));
+            SetTextColor(dc, muted);
         } else {
             Ellipse(dc, center_x - r, center_y - r, center_x + r + 1,
                     center_y + r + 1);
@@ -884,7 +903,7 @@ static void chart_draw(WtkWidget *canvas, HDC dc, int width, int height,
     DeleteObject(point_pen);
     DeleteObject(point_brush);
 
-    SetTextColor(dc, RGB(112, 123, 140));
+    SetTextColor(dc, muted);
     for (i = 0; i < 10; ++i) {
         static const WCHAR *days[10] = {
             L"周一", L"周二", L"周三", L"周四", L"周五",
@@ -1074,7 +1093,7 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
     pack_top(paragraph, WTK_FILL_X, 0, 0, 6);
     bullets = new_label(
         intro,
-        "· 原生 Windows / WinTk 双视觉风格，可运行时切换\n"
+        "· Fusion / 原生 Windows / WinTk 三种视觉风格，可运行时切换\n"
         "· 原生 EDIT/LISTBOX 控件嵌入自绘或原生宿主\n"
         "· UTF-8 API，支持中文与输入法，DPI 感知\n"
         "· Pack/Grid/Place 布局、定时器、菜单、对话框与画布",
@@ -1083,7 +1102,8 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
 
     code_card = new_card(page, 18);
     wtk_widget_set_background(code_card, WTK_RGB(17, 26, 43));
-    wtk_widget_set_border(code_card, WTK_RGB(30, 43, 67), 1, 12);
+    wtk_widget_set_border(code_card, WTK_RGB(30, 43, 67), 1,
+                          theme->corner_radius + 1);
     wtk_pack(code_card, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 10);
     {
         WtkWidget *code_header = wtk_frame(code_card);

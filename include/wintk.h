@@ -116,12 +116,9 @@ typedef enum WtkCursor {
     WTK_CURSOR_NO
 } WtkCursor;
 
-/* Visual style of the built-in widgets.
- *
- * AUTO (the default) resolves to FUSION, a neutral Qt-Fusion-like presentation.
- * NATIVE is the Windows UxTheme presentation and WINTK is the original custom
- * look. The environment variable WINTK_STYLE can be set to auto, fusion (or
- * qt), native or wintk before creating the app to choose a default. */
+/* Compatibility style hint. The WinTk core always draws its original GDI
+ * appearance unless an application installs a WtkStylePainter. Native and
+ * Fusion are rendered by the Designer-provided painter module. */
 typedef enum WtkStyle {
     WTK_STYLE_AUTO = 0,
     WTK_STYLE_NATIVE,
@@ -224,8 +221,10 @@ typedef struct WtkTheme {
 
 /* Fill a theme with WinTk's original light palette (the WinTk style). */
 void wtk_theme_default(WtkTheme *theme);
-/* Fill a theme with the neutral Qt-Fusion-like palette used by default. */
+/* Fill a theme with the neutral Qt-Fusion-like palette. */
 void wtk_theme_fusion(WtkTheme *theme);
+/* Fill a theme with Windows system colors (the default Native style). */
+void wtk_theme_native(WtkTheme *theme);
 
 /* ------------------------------------------------------------------------- */
 /* Application                                                               */
@@ -243,10 +242,99 @@ int wtk_app_dpi(WtkApp *app);
 int wtk_scale(WtkApp *app, int logical_pixels);
 
 /* Requested and resolved visual style. AUTO resolves to NATIVE on Windows. */
+/* Compatibility style hint. Setting a hint does not change the core GDI
+ * drawing by itself; register a WtkStylePainter for Native/Fusion rendering. */
 void wtk_app_set_style(WtkApp *app, WtkStyle style);
 WtkStyle wtk_app_get_style(WtkApp *app);
 WtkStyle wtk_app_resolved_style(WtkApp *app);
 const char *wtk_style_name(WtkStyle style);
+
+/* ------------------------------------------------------------------------- */
+/* Optional style painter                                                    */
+/* ------------------------------------------------------------------------- */
+
+typedef enum WtkWidgetKind {
+    WTK_KIND_WINDOW = 0,
+    WTK_KIND_FRAME,
+    WTK_KIND_LABEL,
+    WTK_KIND_BUTTON,
+    WTK_KIND_ENTRY,
+    WTK_KIND_TEXT,
+    WTK_KIND_LISTBOX,
+    WTK_KIND_CHECKBOX,
+    WTK_KIND_RADIOGROUP,
+    WTK_KIND_RADIO,
+    WTK_KIND_SLIDER,
+    WTK_KIND_PROGRESS,
+    WTK_KIND_SEPARATOR,
+    WTK_KIND_CANVAS
+} WtkWidgetKind;
+
+typedef struct WtkPaintState {
+    WtkWidgetKind kind;
+    const WCHAR *text;       /* UTF-16 text; NULL for fields/canvas. */
+    HFONT font;
+
+    WtkColor background;
+    WtkColor foreground;
+    WtkColor border;
+    int background_set;
+    int foreground_set;
+    int border_set;
+    int border_width;
+    int border_radius;
+
+    int pad_left;
+    int pad_top;
+    int pad_right;
+    int pad_bottom;
+
+    int width;
+    int height;
+    int enabled;
+    int hover;
+    int pressed;
+    int focused;
+    int checked;
+    int selected;
+    int focus_ring;
+    int show_percent;
+    int password;
+    int readonly;
+
+    WtkButtonStyle button_style;
+    double progress;
+    int value;
+    int value_min;
+    int value_max;
+} WtkPaintState;
+
+/* Draw one widget. The painter receives the host HDC and may draw any
+ * WinTk widget except Canvas content (Canvas draw callbacks remain in core). */
+typedef void (*WtkStylePaintFn)(WtkWidget *widget, HDC dc,
+                                const RECT *bounds,
+                                const WtkPaintState *state,
+                                void *userdata);
+
+/* Optional metrics for native EDIT/LISTBOX children. Return values are device
+ * pixels: the child inset and the EM_SETMARGINS text margin. */
+typedef void (*WtkStyleFieldMetricsFn)(WtkWidget *widget,
+                                       const WtkPaintState *state,
+                                       int *inset_x, int *inset_y,
+                                       int *text_margin, void *userdata);
+
+typedef struct WtkStylePainter {
+    const char *name;
+    WtkStylePaintFn paint;
+    WtkStyleFieldMetricsFn field_metrics;
+} WtkStylePainter;
+
+void wtk_app_set_style_painter(WtkApp *app,
+                               const WtkStylePainter *painter,
+                               void *userdata);
+const WtkStylePainter *wtk_app_get_style_painter(WtkApp *app);
+void *wtk_app_get_style_painter_data(WtkApp *app);
+WtkWidgetKind wtk_widget_kind(WtkWidget *widget);
 
 /* Locale-aware default UI font family selected by WinTk (for example
  * "Microsoft YaHei UI" on Simplified Chinese Windows or "Segoe UI" when no

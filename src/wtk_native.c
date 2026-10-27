@@ -307,13 +307,20 @@ void wtk__native_position(WtkWidget *widget)
     if (height < 0)
         height = 0;
 
-    if (wtk__style_is_native(widget)) {
-        inset_x = wtk__scale_widget(widget, 2);
-        inset_y = wtk__scale_widget(widget, 2);
-    } else if (wtk__style_is_fusion(widget)) {
+    if (widget->app->style_painter &&
+        widget->app->style_painter->field_metrics) {
+        WtkPaintState state;
+        int text_margin = -1;
+        wtk__build_paint_state(widget, &state);
         inset_x = wtk__scale_widget(widget, 4);
         inset_y = wtk__scale_widget(widget,
                                     widget->type == WTK_TYPE_ENTRY ? 2 : 4);
+        widget->style_margin = wtk__scale_widget(widget, 4);
+        widget->app->style_painter->field_metrics(
+            widget, &state, &inset_x, &inset_y, &text_margin,
+            widget->app->style_painter_data);
+        if (text_margin >= 0)
+            widget->style_margin = text_margin;
     } else if (widget->type == WTK_TYPE_ENTRY) {
         inset_x = wtk__scale_widget(widget, 7);
         inset_y = wtk__scale_widget(widget, 3);
@@ -356,11 +363,9 @@ void wtk__native_position(WtkWidget *widget)
                  SWP_NOZORDER | SWP_NOACTIVATE);
     if (widget->type == WTK_TYPE_ENTRY ||
         widget->type == WTK_TYPE_TEXT) {
-        int margin = wtk__style_is_native(widget)
-                         ? wtk__scale_widget(widget, 3)
-                         : (wtk__style_is_fusion(widget)
-                                ? wtk__scale_widget(widget, 4)
-                                : wtk__scale_widget(widget, 5));
+        int margin = widget->style_margin >= 0
+                         ? widget->style_margin
+                         : wtk__scale_widget(widget, 5);
         SendMessageW(widget->input, EM_SETMARGINS,
                      EC_LEFTMARGIN | EC_RIGHTMARGIN,
                      MAKELPARAM(margin, margin));

@@ -88,6 +88,8 @@ struct WtkApp {
     WtkStyle style_requested;
     WtkStyle style_resolved;
     int theme_custom;
+    const WtkStylePainter *style_painter;
+    void *style_painter_data;
     HTHEME theme_button;
     HTHEME theme_edit;
     HTHEME theme_listbox;
@@ -156,6 +158,7 @@ struct WtkWidget {
     int pad_t;
     int pad_r;
     int pad_b;
+    int style_margin;          /* Device pixels; -1 = derive from style. */
 
     int req_w;
     int req_h;
@@ -257,6 +260,7 @@ int wtk__logical(WtkApp *app, int pixels);
 int wtk__scale_widget(WtkWidget *widget, int pixels);
 int wtk__style_is_native(WtkWidget *widget);
 int wtk__style_is_fusion(WtkWidget *widget);
+void wtk__build_paint_state(WtkWidget *widget, WtkPaintState *state);
 WtkColor wtk__system_color(int index);
 HTHEME wtk__theme_button(WtkWidget *widget);
 HTHEME wtk__theme_edit(WtkWidget *widget);

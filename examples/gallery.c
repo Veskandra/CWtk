@@ -25,7 +25,6 @@ struct GalleryState {
 
     WtkWidget *page_title;
     WtkWidget *page_subtitle;
-    WtkWidget *style_button;
     WtkWidget *pages[4];
     WtkWidget *nav[4];
     NavData nav_data[4];
@@ -67,7 +66,7 @@ static const char *PAGE_TITLES[4] = {
 
 static const char *PAGE_SUBTITLES[4] = {
     "一个紧凑的 C API，托起完整的桌面界面。",
-    "Qt Fusion 风格、原生输入控件与统一的事件模型。",
+    "GDI 自绘、原生输入控件与统一的事件模型。",
     "双缓冲 GDI 画布，支持鼠标、悬停与绘制回调。",
     "这个轻量框架背后的设计取舍。"
 };
@@ -115,7 +114,9 @@ static WtkWidget *new_card(WtkWidget *parent, int padding)
     const WtkTheme *theme = wtk_app_get_theme(app);
     wtk_widget_set_background(card, theme->surface);
     wtk_widget_set_border(card, theme->border, 1,
-                          theme->corner_radius + 1);
+                          theme->corner_radius > 0
+                              ? theme->corner_radius + 1
+                              : 0);
     wtk_widget_set_padding(card, padding, padding, padding, padding);
     return card;
 }
@@ -143,6 +144,22 @@ static void add_card_heading(WtkWidget *card, GalleryState *state,
 /* Page switching                                                            */
 /* ------------------------------------------------------------------------- */
 
+static WtkColor nav_text_color(GalleryState *state, int index)
+{
+    if (index == state->page)
+        return state->theme->on_accent;
+    return state->theme->text;
+}
+
+static void style_nav_button(GalleryState *state, WtkWidget *button,
+                             int index, int selected)
+{
+    wtk_button_set_style(button,
+                         selected ? WTK_BUTTON_PRIMARY : WTK_BUTTON_GHOST);
+    wtk_widget_set_foreground(
+        button, selected ? nav_text_color(state, index) : state->theme->text);
+}
+
 static void switch_page(GalleryState *state, int index)
 {
     int i;
@@ -157,12 +174,7 @@ static void switch_page(GalleryState *state, int index)
     for (i = 0; i < 4; ++i) {
         if (!state->nav[i])
             continue;
-        wtk_button_set_style(state->nav[i],
-                             i == index ? WTK_BUTTON_PRIMARY
-                                        : WTK_BUTTON_GHOST);
-        wtk_widget_set_foreground(state->nav[i],
-                                  i == index ? state->theme->on_accent
-                                             : state->theme->text);
+        style_nav_button(state, state->nav[i], i, i == index);
     }
     wtk_label_set_text(state->page_title, PAGE_TITLES[index]);
     wtk_label_set_text(state->page_subtitle, PAGE_SUBTITLES[index]);
@@ -181,38 +193,6 @@ static void on_about_click(WtkWidget *widget, WtkEvent *event, void *userdata)
     (void)widget;
     (void)event;
     switch_page((GalleryState *)userdata, 3);
-}
-
-static void gallery_update_style_button(GalleryState *state)
-{
-    const char *label = "风格：Fusion";
-    WtkStyle style;
-    if (!state || !state->style_button)
-        return;
-    style = wtk_app_resolved_style(state->app);
-    if (style == WTK_STYLE_WINTK)
-        label = "风格：WinTk";
-    else if (style == WTK_STYLE_NATIVE)
-        label = "风格：Windows";
-    wtk_button_set_text(state->style_button, label);
-}
-
-static void on_style_click(WtkWidget *widget, WtkEvent *event, void *userdata)
-{
-    GalleryState *state = (GalleryState *)userdata;
-    WtkStyle style;
-    WtkStyle next;
-    (void)widget;
-    (void)event;
-    style = wtk_app_resolved_style(state->app);
-    if (style == WTK_STYLE_FUSION)
-        next = WTK_STYLE_NATIVE;
-    else if (style == WTK_STYLE_NATIVE)
-        next = WTK_STYLE_WINTK;
-    else
-        next = WTK_STYLE_FUSION;
-    wtk_app_set_style(state->app, next);
-    gallery_update_style_button(state);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -251,10 +231,7 @@ static void build_sidebar(GalleryState *state, WtkWidget *window)
     for (i = 0; i < 4; ++i) {
         WtkWidget *button = wtk_button(sidebar, names[i]);
         wtk_button_set_align(button, WTK_ALIGN_LEFT);
-        wtk_button_set_style(button, i == 0 ? WTK_BUTTON_PRIMARY
-                                            : WTK_BUTTON_GHOST);
-        wtk_widget_set_foreground(button, i == 0 ? theme->on_accent
-                                                 : theme->text);
+        style_nav_button(state, button, i, i == 0);
         wtk_widget_set_font(button, NULL, 10, WTK_FONT_BOLD);
         wtk_widget_set_padding(button, 14, 8, 14, 8);
         wtk_pack(button, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 3);
@@ -282,18 +259,11 @@ static void build_header(GalleryState *state, WtkWidget *main)
     const WtkTheme *theme = state->theme;
     WtkWidget *header = wtk_frame(main);
     WtkWidget *actions = wtk_frame(header);
-    WtkWidget *style = wtk_button(actions, "风格：Fusion");
     WtkWidget *about = wtk_button(actions, "关于");
     WtkWidget *titles = wtk_frame(header);
 
     wtk_pack(header, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 16);
     wtk_pack(actions, WTK_SIDE_RIGHT, WTK_FILL_NONE, 0, 0, 0);
-    wtk_button_set_style(style, WTK_BUTTON_SECONDARY);
-    wtk_pack(style, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 0, 0);
-    wtk_bind(style, WTK_EVENT_CLICK, on_style_click, state);
-    state->style_button = style;
-    gallery_update_style_button(state);
-
     wtk_button_set_style(about, WTK_BUTTON_SECONDARY);
     wtk_pack(about, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 4, 0);
     wtk_bind(about, WTK_EVENT_CLICK, on_about_click, state);
@@ -1075,7 +1045,6 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
     WtkWidget *actions;
     WtkWidget *back;
     WtkWidget *quit;
-
     wtk_pack(intro, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 0);
     eyebrow = new_label(intro, "项目说明", 8, WTK_FONT_BOLD,
                         theme->accent);
@@ -1093,8 +1062,8 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
     pack_top(paragraph, WTK_FILL_X, 0, 0, 6);
     bullets = new_label(
         intro,
-        "· Fusion / 原生 Windows / WinTk 三种视觉风格，可运行时切换\n"
-        "· 原生 EDIT/LISTBOX 控件嵌入自绘或原生宿主\n"
+        "· 核心保留 GDI 自绘；Designer 提供原生/Fusion/WinTk 风格\n"
+        "· 原生 EDIT/LISTBOX 控件嵌入 GDI 宿主\n"
         "· UTF-8 API，支持中文与输入法，DPI 感知\n"
         "· Pack/Grid/Place 布局、定时器、菜单、对话框与画布",
         10, WTK_FONT_NORMAL, theme->text);
@@ -1107,11 +1076,12 @@ static void build_about_page(GalleryState *state, WtkWidget *page)
     wtk_pack(code_card, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 10);
     {
         WtkWidget *code_header = wtk_frame(code_card);
-        WtkWidget *filename = new_label(code_header, "example.c", 9,
-                                        WTK_FONT_BOLD,
-                                        WTK_RGB(126, 166, 255));
-        WtkWidget *lang = new_label(code_header, "C11  /  无第三方依赖", 9,
-                                    WTK_FONT_NORMAL, WTK_RGB(121, 139, 166));
+        WtkWidget *filename =
+            new_label(code_header, "example.c", 9, WTK_FONT_BOLD,
+                      WTK_RGB(126, 166, 255));
+        WtkWidget *lang =
+            new_label(code_header, "C11  /  无第三方依赖", 9,
+                      WTK_FONT_NORMAL, WTK_RGB(121, 139, 166));
         wtk_pack(code_header, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 4);
         wtk_pack(filename, WTK_SIDE_LEFT, WTK_FILL_NONE, 0, 0, 0);
         wtk_pack(lang, WTK_SIDE_RIGHT, WTK_FILL_NONE, 0, 0, 0);

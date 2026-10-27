@@ -29,7 +29,8 @@ LIB_SRCS := \
 	$(ROOT)/src/wtk_widgets.c
 
 LIB_OBJS := $(patsubst $(ROOT)/src/%.c,$(OBJDIR)/lib_%.o,$(LIB_SRCS))
-APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o
+APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o \
+	$(OBJDIR)/designer_style.o
 
 .PHONY: all clean run
 
@@ -45,6 +46,10 @@ $(OBJDIR)/designer.o: src/designer.c src/designer_model.h $(ROOT)/include/wintk.
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/designer_model.o: src/designer_model.c src/designer_model.h | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/designer_style.o: src/designer_style.c src/designer_style.h \
+		$(ROOT)/src/wtk_internal.h $(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(RES): $(ROOT)/resources/wintk.rc $(ROOT)/resources/wintk.manifest $(ROOT)/resources/wintk.ico | $(BUILD)

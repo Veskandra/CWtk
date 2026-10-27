@@ -13,7 +13,8 @@
 - 属性编辑：变量名、文本、X/Y/宽/高、字号、粗体、复选框选中态、主按钮样式。
 - 8px 网格吸附；方向键微调，`Shift+方向键` 按网格移动，`Delete` 删除，`Esc` 取消选择。
 - `Ctrl+Z` / `Ctrl+Y` 撤销/重做；顶部按钮同样可用。
-- 风格菜单可在“自动 / Fusion / 原生 Windows / WinTk 自定义”之间切换；画布预览、属性控件和运行时预览同步刷新。
+- 风格菜单可在 Windows 原生、Fusion、WinTk 之间切换；画布预览、属性控件和运行时预览同步刷新。
+- Designer 自带 `src/designer_style.c`，通过核心 `WtkStylePainter` 接口绘制 Native/Fusion；WinTk 直接使用核心 GDI。
 - 实时预览窗口使用真实 WinTk 控件；导出一个完整、可编译的 `.c` 文件，包含 `build_page()`、`WinMain()`，并保留当前选择的应用风格。
 - 生成的代码使用 `wtk_place` 绝对布局，页面已设置白色背景；控件事件由开发者继续通过 `wtk_bind` 添加。
 
@@ -46,14 +47,29 @@ designer\build-cmake\bin\wintk_designer.exe
 
 ## 运行时风格
 
-WinTk 的默认风格为 `WTK_STYLE_AUTO`，解析为 Qt Fusion 方向的 `WTK_STYLE_FUSION`。也可以在启动前设置：
+核心 WinTk 默认使用原始 GDI 自绘。Designer 在启动时安装自己的风格 painter：
+
+- `Windows 原生`：`designer_style.c` 实现 UxTheme 原生外观
+- `Fusion`：`designer_style.c` 实现中性灰 Qt Fusion 方向外观
+- `WinTk`：不注册 painter，直接使用核心 GDI 外观
+
+启动前可通过兼容提示选择初始风格：
 
 ```bat
-set WINTK_STYLE=wintk
+set WINTK_STYLE=native
 designer\build\wintk_designer.exe
 ```
 
-可选值为 `auto`、`fusion`（或 `qt`）、`native`、`wintk`（也接受 `classic` / `custom`）。风格菜单中的“自动”会使用 Fusion；切到 WinTk 可恢复原来的圆角自绘外观。
+可选提示为 `auto`、`native`、`fusion`（或 `qt`）、`wintk`。没有安装 painter 的普通 WinTk 程序只会使用核心 GDI。
+
+导出 `.c` 时会调用 `designer_style_apply()`；需要把 `designer/src/designer_style.c` 作为伴生模块一起编译：
+
+```bat
+gcc -std=c11 -DUNICODE -D_UNICODE ^
+    -Iinclude -Isrc -Idesigner/src ^
+    page.c designer\src\designer_style.c build\libwintk.a ^
+    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
+```
 
 ## 当前限制
 

@@ -6,6 +6,7 @@
  */
 #include "wintk.h"
 #include "designer_model.h"
+#include "designer_style.h"
 
 #include <commdlg.h>
 #include <stdio.h>
@@ -1070,8 +1071,12 @@ static void canvas_draw(WtkWidget *canvas, HDC dc, int width, int height,
     if (!designer_view(designer, &page, &scale))
         return;
     ctx.scale = scale;
-    workspace = ctx.fusion ? WTK_RGB(239, 239, 239)
-                           : WTK_RGB(230, 235, 244);
+    if (ctx.native)
+        workspace = ctx.theme->window_bg;
+    else if (ctx.fusion)
+        workspace = WTK_RGB(239, 239, 239);
+    else
+        workspace = WTK_RGB(230, 235, 244);
 
     full.left = 0;
     full.top = 0;
@@ -1079,7 +1084,7 @@ static void canvas_draw(WtkWidget *canvas, HDC dc, int width, int height,
     full.bottom = height;
     fill_color(dc, &full, workspace);
 
-    {
+    if (!ctx.native) {
         RECT shadow = page;
         int offset = clampi(iround(5.0 * scale), 3, 8);
         shadow.left += offset;
@@ -1107,8 +1112,11 @@ static void canvas_draw(WtkWidget *canvas, HDC dc, int width, int height,
         for (y = page.top + grid; y < page.bottom; y += grid) {
             for (x = page.left + grid; x < page.right; x += grid) {
                 SetPixelV(dc, x, y,
-                          color_ref(ctx.fusion ? WTK_RGB(233, 233, 233)
-                                               : WTK_RGB(226, 232, 242)));
+                          color_ref(ctx.native
+                                        ? WTK_RGB(220, 220, 220)
+                                        : (ctx.fusion
+                                               ? WTK_RGB(233, 233, 233)
+                                               : WTK_RGB(226, 232, 242))));
             }
         }
     }
@@ -2753,17 +2761,15 @@ static void on_style_click(WtkWidget *widget, WtkEvent *event, void *data)
     menu = CreatePopupMenu();
     if (!menu)
         return;
-    AppendMenuW(menu, MF_STRING | (current == WTK_STYLE_AUTO ? MF_CHECKED : 0),
-                1, L"自动（默认 Fusion）");
+    AppendMenuW(menu,
+                MF_STRING | (current == WTK_STYLE_NATIVE ? MF_CHECKED : 0),
+                1, L"Windows 原生");
     AppendMenuW(menu,
                 MF_STRING | (current == WTK_STYLE_FUSION ? MF_CHECKED : 0),
                 2, L"Fusion（Qt 风格）");
     AppendMenuW(menu,
-                MF_STRING | (current == WTK_STYLE_NATIVE ? MF_CHECKED : 0),
-                3, L"原生 Windows");
-    AppendMenuW(menu,
                 MF_STRING | (current == WTK_STYLE_WINTK ? MF_CHECKED : 0),
-                4, L"WinTk 自定义");
+                3, L"WinTk 自定义");
     SetMenuDefaultItem(menu, 1, FALSE);
     GetWindowRect(wtk_widget_hwnd(designer->style_button), &rect);
     command = TrackPopupMenu(menu,
@@ -2772,13 +2778,11 @@ static void on_style_click(WtkWidget *widget, WtkEvent *event, void *data)
                              wtk_widget_hwnd(designer->window), NULL);
     DestroyMenu(menu);
     if (command == 1)
-        wtk_app_set_style(designer->app, WTK_STYLE_AUTO);
+        designer_style_apply(designer->app, DESIGNER_STYLE_NATIVE);
     else if (command == 2)
-        wtk_app_set_style(designer->app, WTK_STYLE_FUSION);
+        designer_style_apply(designer->app, DESIGNER_STYLE_FUSION);
     else if (command == 3)
-        wtk_app_set_style(designer->app, WTK_STYLE_NATIVE);
-    else if (command == 4)
-        wtk_app_set_style(designer->app, WTK_STYLE_WINTK);
+        designer_style_apply(designer->app, DESIGNER_STYLE_WINTK);
     else
         return;
     designer->doc.style = (int)wtk_app_get_style(designer->app);
@@ -2804,7 +2808,9 @@ static WtkWidget *make_card(Designer *designer, WtkWidget *parent)
     WtkWidget *card = wtk_frame(parent);
     wtk_widget_set_background(card, theme->surface);
     wtk_widget_set_border(card, theme->border, 1,
-                          theme->corner_radius + 1);
+                          theme->corner_radius > 0
+                              ? theme->corner_radius + 1
+                              : 0);
     wtk_widget_set_padding(card, 14, 14, 14, 14);
     return card;
 }
@@ -2914,35 +2920,53 @@ static WtkWidget *build_header(Designer *designer, WtkWidget *window)
 
 static WtkWidget *build_code_panel(Designer *designer, WtkWidget *window)
 {
+    const WtkTheme *theme = wtk_app_get_theme(designer->app);
+    int native =
+        wtk_app_resolved_style(designer->app) == WTK_STYLE_NATIVE;
     WtkWidget *card = wtk_frame(window);
     WtkWidget *header = wtk_frame(card);
     WtkWidget *title = wtk_label(header, "生成的 C 代码");
     WtkWidget *hint = wtk_label(header, "自动生成 · 只读");
+    WtkColor code_bg = native ? theme->surface : WTK_RGB(16, 24, 40);
+    WtkColor code_border =
+        native ? theme->border : WTK_RGB(40, 55, 79);
+    WtkColor code_title =
+        native ? theme->text : WTK_RGB(235, 242, 252);
+    WtkColor code_hint =
+        native ? theme->muted : WTK_RGB(148, 170, 201);
+    WtkColor view_bg = native ? theme->surface : WTK_RGB(11, 18, 32);
+    WtkColor view_fg =
+        native ? theme->text : WTK_RGB(221, 231, 247);
+    WtkColor view_border =
+        native ? theme->border : WTK_RGB(37, 50, 74);
+    int radius = native ? 0
+                        : (theme->corner_radius > 0
+                               ? theme->corner_radius + 1
+                               : 0);
+    int view_radius =
+        native ? 0
+               : (theme->corner_radius > 2 ? theme->corner_radius - 1 : 2);
 
-    wtk_widget_set_background(card, WTK_RGB(16, 24, 40));
-    wtk_widget_set_border(card, WTK_RGB(40, 55, 79), 1,
-                          wtk_app_get_theme(designer->app)->corner_radius + 1);
+    wtk_widget_set_background(card, code_bg);
+    wtk_widget_set_border(card, code_border, 1, radius);
     wtk_widget_set_padding(card, 12, 10, 12, 12);
     wtk_widget_set_size(card, 0, designer->code_h);
     designer->code_card = card;
 
-    wtk_widget_set_background(header, WTK_RGB(16, 24, 40));
+    wtk_widget_set_background(header, code_bg);
     wtk_widget_set_font(hint, NULL, 9, 0);
-    wtk_widget_set_foreground(hint, WTK_RGB(148, 170, 201));
+    wtk_widget_set_foreground(hint, code_hint);
     wtk_pack(hint, WTK_SIDE_RIGHT, WTK_FILL_NONE, 0, 0, 0);
     wtk_widget_set_font(title, NULL, 11, WTK_FONT_BOLD);
-    wtk_widget_set_foreground(title, WTK_RGB(235, 242, 252));
+    wtk_widget_set_foreground(title, code_title);
     wtk_pack(title, WTK_SIDE_LEFT, WTK_FILL_X, 1, 0, 0);
     wtk_pack(header, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 6);
 
     designer->code_view = wtk_text(card);
-    wtk_widget_set_background(designer->code_view, WTK_RGB(11, 18, 32));
-    wtk_widget_set_foreground(designer->code_view, WTK_RGB(221, 231, 247));
-    wtk_widget_set_border(
-        designer->code_view, WTK_RGB(37, 50, 74), 1,
-        wtk_app_get_theme(designer->app)->corner_radius > 2
-            ? wtk_app_get_theme(designer->app)->corner_radius - 1
-            : 2);
+    wtk_widget_set_background(designer->code_view, view_bg);
+    wtk_widget_set_foreground(designer->code_view, view_fg);
+    wtk_widget_set_border(designer->code_view, view_border, 1,
+                          view_radius);
     wtk_widget_set_font(designer->code_view, "Consolas", 9, 0);
     wtk_text_set_readonly(designer->code_view, 1);
     wtk_pack(designer->code_view, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 0);
@@ -3143,6 +3167,15 @@ static int run_designer(void)
     app = wtk_app_new();
     if (!app)
         return 1;
+    {
+        WtkStyle hint = wtk_app_get_style(app);
+        DesignerStyle initial = hint == WTK_STYLE_FUSION
+                                    ? DESIGNER_STYLE_FUSION
+                                    : (hint == WTK_STYLE_WINTK
+                                           ? DESIGNER_STYLE_WINTK
+                                           : DESIGNER_STYLE_NATIVE);
+        designer_style_apply(app, initial);
+    }
     designer = (Designer *)calloc(1, sizeof(*designer));
     if (!designer) {
         wtk_app_free(app);

@@ -51,10 +51,13 @@ endif()
 add_executable(wintk_designer WIN32
     src/designer.c
     src/designer_model.c
+    src/designer_style.c
     ../resources/wintk.rc
 )
 target_include_directories(wintk_designer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources"
 )
 target_compile_definitions(wintk_designer PRIVATE UNICODE _UNICODE)

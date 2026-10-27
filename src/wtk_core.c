@@ -165,6 +165,97 @@ int wtk__style_is_fusion(WtkWidget *widget)
            widget->app->style_resolved == WTK_STYLE_FUSION;
 }
 
+WtkWidgetKind wtk_widget_kind(WtkWidget *widget)
+{
+    if (!widget)
+        return WTK_KIND_WINDOW;
+    switch (widget->type) {
+    case WTK_TYPE_FRAME:
+        return WTK_KIND_FRAME;
+    case WTK_TYPE_LABEL:
+        return WTK_KIND_LABEL;
+    case WTK_TYPE_BUTTON:
+        return WTK_KIND_BUTTON;
+    case WTK_TYPE_ENTRY:
+        return WTK_KIND_ENTRY;
+    case WTK_TYPE_TEXT:
+        return WTK_KIND_TEXT;
+    case WTK_TYPE_LISTBOX:
+        return WTK_KIND_LISTBOX;
+    case WTK_TYPE_CHECKBOX:
+        return WTK_KIND_CHECKBOX;
+    case WTK_TYPE_RADIOGROUP:
+        return WTK_KIND_RADIOGROUP;
+    case WTK_TYPE_RADIO:
+        return WTK_KIND_RADIO;
+    case WTK_TYPE_SLIDER:
+        return WTK_KIND_SLIDER;
+    case WTK_TYPE_PROGRESS:
+        return WTK_KIND_PROGRESS;
+    case WTK_TYPE_SEPARATOR:
+        return WTK_KIND_SEPARATOR;
+    case WTK_TYPE_CANVAS:
+        return WTK_KIND_CANVAS;
+    case WTK_TYPE_WINDOW:
+    default:
+        return WTK_KIND_WINDOW;
+    }
+}
+
+void wtk__build_paint_state(WtkWidget *widget, WtkPaintState *state)
+{
+    WtkTheme *theme;
+    if (!state)
+        return;
+    memset(state, 0, sizeof(*state));
+    if (!widget || !widget->app)
+        return;
+    theme = &widget->app->theme;
+    state->kind = wtk_widget_kind(widget);
+    state->text = widget->text;
+    state->font = widget->font;
+    state->background = widget->bg_set
+                            ? widget->bg
+                            : (wtk__is_field(widget)
+                                   ? wtk__field_bg(widget)
+                                   : wtk__widget_bg(widget));
+    state->foreground = widget->fg_set
+                            ? widget->fg
+                            : (wtk__is_field(widget)
+                                   ? wtk__field_fg(widget)
+                                   : theme->text);
+    state->border = widget->border_set ? widget->border : theme->border;
+    state->background_set = widget->bg_set;
+    state->foreground_set = widget->fg_set;
+    state->border_set = widget->border_set;
+    state->border_width = widget->border_width;
+    state->border_radius = widget->border_radius;
+    state->pad_left = widget->pad_l;
+    state->pad_top = widget->pad_t;
+    state->pad_right = widget->pad_r;
+    state->pad_bottom = widget->pad_b;
+    state->width = widget->w;
+    state->height = widget->h;
+    state->enabled = widget->enabled;
+    state->hover = widget->hover;
+    state->pressed = widget->pressed;
+    state->focused = widget->focused;
+    state->checked = widget->checked;
+    state->selected = wtk__radio_selected(widget);
+    state->focus_ring = widget->focus_ring;
+    state->show_percent = widget->show_percent;
+    state->password = widget->password;
+    state->readonly = widget->readonly;
+    state->button_style = widget->button_style;
+    state->progress = widget->progress;
+    state->value = widget->value;
+    state->value_min = widget->value_min;
+    state->value_max = widget->value_max;
+    if (state->kind == WTK_KIND_ENTRY || state->kind == WTK_KIND_TEXT ||
+        state->kind == WTK_KIND_LISTBOX)
+        state->text = NULL;
+}
+
 WtkColor wtk__system_color(int index)
 {
     COLORREF color = GetSysColor(index);
@@ -202,11 +293,8 @@ WtkColor wtk__container_bg(WtkWidget *container)
         return WTK_RGB(245, 246, 250);
     if (container->bg_set)
         return container->bg;
-    if (!container->parent) {
-        if (wtk__style_is_native(container))
-            return wtk__system_color(COLOR_WINDOW);
+    if (!container->parent)
         return container->app->theme.window_bg;
-    }
     return wtk__container_bg(container->parent);
 }
 
@@ -216,11 +304,8 @@ WtkColor wtk__widget_bg(WtkWidget *widget)
         return WTK_RGB(245, 246, 250);
     if (widget->bg_set)
         return widget->bg;
-    if (!widget->parent) {
-        if (wtk__style_is_native(widget))
-            return wtk__system_color(COLOR_WINDOW);
+    if (!widget->parent)
         return widget->app->theme.window_bg;
-    }
     return wtk__container_bg(widget->parent);
 }
 
@@ -230,11 +315,6 @@ WtkColor wtk__field_bg(WtkWidget *widget)
         return WTK_WHITE;
     if (widget->bg_set)
         return widget->bg;
-    if (wtk__style_is_native(widget)) {
-        if (!widget->enabled)
-            return wtk__system_color(COLOR_3DFACE);
-        return wtk__system_color(COLOR_WINDOW);
-    }
     if (!widget->enabled || widget->readonly)
         return widget->app->theme.surface_alt;
     return widget->app->theme.surface;
@@ -246,11 +326,6 @@ WtkColor wtk__field_fg(WtkWidget *widget)
         return WTK_BLACK;
     if (widget->fg_set)
         return widget->fg;
-    if (wtk__style_is_native(widget)) {
-        if (!widget->enabled)
-            return wtk__system_color(COLOR_GRAYTEXT);
-        return wtk__system_color(COLOR_WINDOWTEXT);
-    }
     if (!widget->enabled)
         return widget->app->theme.muted;
     return widget->app->theme.text;
@@ -300,6 +375,31 @@ void wtk_theme_fusion(WtkTheme *theme)
     theme->danger = WTK_RGB(192, 57, 43);
     theme->corner_radius = 3;
     theme->control_height = 30;
+}
+
+void wtk_theme_native(WtkTheme *theme)
+{
+    WtkColor accent;
+    if (!theme)
+        return;
+
+    memset(theme, 0, sizeof(*theme));
+    accent = wtk__system_color(COLOR_HIGHLIGHT);
+    theme->window_bg = wtk__system_color(COLOR_3DFACE);
+    theme->surface = wtk__system_color(COLOR_WINDOW);
+    theme->surface_alt = wtk__system_color(COLOR_3DFACE);
+    theme->text = wtk__system_color(COLOR_WINDOWTEXT);
+    theme->muted = wtk__system_color(COLOR_GRAYTEXT);
+    theme->border = wtk__system_color(COLOR_3DSHADOW);
+    theme->accent = accent;
+    theme->accent_hover = wtk__shade(accent, 8);
+    theme->accent_pressed = wtk__shade(accent, -10);
+    theme->on_accent = wtk__system_color(COLOR_HIGHLIGHTTEXT);
+    theme->success = WTK_RGB(0, 128, 0);
+    theme->warning = WTK_RGB(191, 98, 0);
+    theme->danger = WTK_RGB(192, 0, 0);
+    theme->corner_radius = 0;
+    theme->control_height = 28;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -549,21 +649,11 @@ static WtkStyle style_from_environment(void)
 
 static WtkStyle resolve_style(WtkStyle requested)
 {
-    /* AUTO is the neutral Qt-Fusion-like default. NATIVE remains an explicit
-     * opt-in for the UxTheme presentation. */
+    /* The core's actual drawing is the original WinTk GDI style. AUTO resolves
+     * to that hint; Native/Fusion are hints for an installed painter. */
     if (requested == WTK_STYLE_AUTO)
-        return WTK_STYLE_FUSION;
+        return WTK_STYLE_WINTK;
     return requested;
-}
-
-static void apply_default_theme(WtkApp *app)
-{
-    if (!app)
-        return;
-    if (app->style_resolved == WTK_STYLE_WINTK)
-        wtk_theme_default(&app->theme);
-    else
-        wtk_theme_fusion(&app->theme);
 }
 
 static void open_theme_handles(WtkApp *app)
@@ -598,6 +688,16 @@ static void close_theme_handles(WtkApp *app)
     app->theme_progress = NULL;
 }
 
+static void reset_style_metrics(WtkWidget *widget)
+{
+    int i;
+    if (!widget)
+        return;
+    widget->style_margin = -1;
+    for (i = 0; i < widget->child_count; ++i)
+        reset_style_metrics(widget->children[i]);
+}
+
 static void refresh_style_tree(WtkWidget *widget)
 {
     int i;
@@ -608,10 +708,7 @@ static void refresh_style_tree(WtkWidget *widget)
         wtk__native_position(widget);
     }
     if (widget->type == WTK_TYPE_BUTTON && !widget->cursor_set)
-        widget->cursor = wtk__style_is_native(widget) ||
-                                 wtk__style_is_fusion(widget)
-                             ? WTK_CURSOR_ARROW
-                             : WTK_CURSOR_HAND;
+        widget->cursor = WTK_CURSOR_HAND;
     wtk__invalidate(widget);
     for (i = 0; i < widget->child_count; ++i)
         refresh_style_tree(widget->children[i]);
@@ -647,7 +744,7 @@ WtkApp *wtk_app_new(void)
     app->style_requested = style_from_environment();
     app->style_resolved = resolve_style(app->style_requested);
     app->theme_custom = 0;
-    apply_default_theme(app);
+    wtk_theme_default(&app->theme);
     wcsncpy(app->ui_font_family, choose_ui_font_family(),
             LF_FACESIZE - 1);
     app->ui_font_family[LF_FACESIZE - 1] = L'\0';
@@ -734,19 +831,6 @@ static void refresh_theme_tree(WtkWidget *widget)
         refresh_theme_tree(widget->children[i]);
 }
 
-static void apply_theme_radii(WtkWidget *widget)
-{
-    int i;
-    if (!widget)
-        return;
-    if (!widget->radius_set) {
-        widget->border_radius =
-            wtk__logical(widget->app, widget->app->theme.corner_radius);
-    }
-    for (i = 0; i < widget->child_count; ++i)
-        apply_theme_radii(widget->children[i]);
-}
-
 void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme)
 {
     int i;
@@ -759,7 +843,6 @@ void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme)
         WtkWidget *window = app->windows[i];
         if (!window->hwnd)
             continue;
-        apply_theme_radii(window);
         refresh_theme_tree(window);
         RedrawWindow(window->hwnd, NULL, NULL,
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -769,6 +852,37 @@ void wtk_app_set_theme(WtkApp *app, const WtkTheme *theme)
 const WtkTheme *wtk_app_get_theme(WtkApp *app)
 {
     return app ? &app->theme : NULL;
+}
+
+void wtk_app_set_style_painter(WtkApp *app,
+                               const WtkStylePainter *painter,
+                               void *userdata)
+{
+    int i;
+    if (!app)
+        return;
+    app->style_painter = painter;
+    app->style_painter_data = userdata;
+    for (i = 0; i < app->window_count; ++i) {
+        WtkWidget *window = app->windows[i];
+        if (!window->hwnd)
+            continue;
+        reset_style_metrics(window);
+        refresh_style_tree(window);
+        wtk__layout_window(window);
+        RedrawWindow(window->hwnd, NULL, NULL,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
+}
+
+const WtkStylePainter *wtk_app_get_style_painter(WtkApp *app)
+{
+    return app ? app->style_painter : NULL;
+}
+
+void *wtk_app_get_style_painter_data(WtkApp *app)
+{
+    return app ? app->style_painter_data : NULL;
 }
 
 void wtk_app_set_style(WtkApp *app, WtkStyle style)
@@ -781,14 +895,11 @@ void wtk_app_set_style(WtkApp *app, WtkStyle style)
         style = WTK_STYLE_AUTO;
     app->style_requested = style;
     app->style_resolved = resolve_style(style);
-    if (!app->theme_custom)
-        apply_default_theme(app);
 
     for (i = 0; i < app->window_count; ++i) {
         WtkWidget *window = app->windows[i];
         if (!window->hwnd)
             continue;
-        apply_theme_radii(window);
         refresh_style_tree(window);
         wtk__layout_window(window);
         RedrawWindow(window->hwnd, NULL, NULL,
@@ -803,7 +914,7 @@ WtkStyle wtk_app_get_style(WtkApp *app)
 
 WtkStyle wtk_app_resolved_style(WtkApp *app)
 {
-    return app ? app->style_resolved : WTK_STYLE_FUSION;
+    return app ? app->style_resolved : WTK_STYLE_WINTK;
 }
 
 const char *wtk_style_name(WtkStyle style)

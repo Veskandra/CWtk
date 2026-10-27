@@ -52,6 +52,7 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
     widget->enabled = 1;
     widget->resizable = 1;
     widget->focus_ring = 1;
+    widget->style_margin = -1;
     widget->layout_mode = WTK_LAYOUT_NONE;
     widget->pack_side = WTK_SIDE_TOP;
     widget->grid_rowspan = 1;
@@ -72,23 +73,12 @@ WtkWidget *wtk__alloc_widget(WtkApp *app, WtkWidget *parent,
     switch (type) {
     case WTK_TYPE_BUTTON:
         widget->focusable = 1;
-        widget->cursor =
-            (app && (app->style_resolved == WTK_STYLE_NATIVE ||
-                     app->style_resolved == WTK_STYLE_FUSION))
-                ? WTK_CURSOR_ARROW
-                : WTK_CURSOR_HAND;
+        widget->cursor = WTK_CURSOR_HAND;
         widget->align = WTK_ALIGN_CENTER;
-        if (app && app->style_resolved == WTK_STYLE_FUSION) {
-            widget->pad_l = wtk__logical(app, 14);
-            widget->pad_r = wtk__logical(app, 14);
-            widget->pad_t = wtk__logical(app, 6);
-            widget->pad_b = wtk__logical(app, 6);
-        } else {
-            widget->pad_l = wtk__logical(app, 20);
-            widget->pad_r = wtk__logical(app, 20);
-            widget->pad_t = wtk__logical(app, 8);
-            widget->pad_b = wtk__logical(app, 8);
-        }
+        widget->pad_l = wtk__logical(app, 20);
+        widget->pad_r = wtk__logical(app, 20);
+        widget->pad_t = wtk__logical(app, 8);
+        widget->pad_b = wtk__logical(app, 8);
         break;
     case WTK_TYPE_ENTRY:
     case WTK_TYPE_TEXT:

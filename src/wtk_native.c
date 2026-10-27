@@ -261,6 +261,30 @@ void wtk__create_native_input(WtkWidget *widget)
     EnableWindow(input, widget->enabled);
 }
 
+static int entry_line_height(WtkWidget *widget)
+{
+    HDC dc;
+    HFONT font;
+    HGDIOBJ old_font = NULL;
+    TEXTMETRICW tm;
+    int height = 0;
+
+    if (!widget || !widget->input)
+        return 0;
+    dc = GetDC(widget->input);
+    if (!dc)
+        return 0;
+    font = (HFONT)SendMessageW(widget->input, WM_GETFONT, 0, 0);
+    if (font)
+        old_font = SelectObject(dc, font);
+    if (GetTextMetricsW(dc, &tm))
+        height = tm.tmHeight + tm.tmExternalLeading;
+    if (old_font)
+        SelectObject(dc, old_font);
+    ReleaseDC(widget->input, dc);
+    return height;
+}
+
 void wtk__native_position(WtkWidget *widget)
 {
     RECT rc;
@@ -268,6 +292,10 @@ void wtk__native_position(WtkWidget *widget)
     int height;
     int inset_x;
     int inset_y;
+    int child_x;
+    int child_y;
+    int child_w;
+    int child_h;
 
     if (!widget || !widget->input || !widget->hwnd)
         return;
@@ -282,8 +310,6 @@ void wtk__native_position(WtkWidget *widget)
     if (wtk__style_is_native(widget)) {
         inset_x = wtk__scale_widget(widget, 2);
         inset_y = wtk__scale_widget(widget, 2);
-        if (widget->type == WTK_TYPE_ENTRY)
-            inset_y = wtk__scale_widget(widget, 2);
     } else if (wtk__style_is_fusion(widget)) {
         inset_x = wtk__scale_widget(widget, 4);
         inset_y = wtk__scale_widget(widget,
@@ -300,8 +326,33 @@ void wtk__native_position(WtkWidget *widget)
         width = 2 * inset_x;
     if (height < 2 * inset_y)
         height = 2 * inset_y;
-    SetWindowPos(widget->input, NULL, inset_x, inset_y,
-                 width - 2 * inset_x, height - 2 * inset_y,
+
+    child_x = inset_x;
+    child_y = inset_y;
+    child_w = width - 2 * inset_x;
+    child_h = height - 2 * inset_y;
+
+    /* A single-line EDIT keeps its text at the top of the client area. Size
+     * the child to one line and center it in the host so the text and caret
+     * share the vertical center of the visible field. */
+    if (widget->type == WTK_TYPE_ENTRY) {
+        int line_h = entry_line_height(widget);
+        if (line_h > 0) {
+            /* The caret is one text line tall and sits at the top of the
+             * EDIT client area. Centering a line-height child therefore
+             * centers the text and caret together. */
+            if (line_h > child_h)
+                line_h = child_h;
+            child_y = inset_y + (child_h - line_h) / 2;
+            child_h = line_h;
+        }
+    }
+
+    if (child_w < 1)
+        child_w = 1;
+    if (child_h < 1)
+        child_h = 1;
+    SetWindowPos(widget->input, NULL, child_x, child_y, child_w, child_h,
                  SWP_NOZORDER | SWP_NOACTIVATE);
     if (widget->type == WTK_TYPE_ENTRY ||
         widget->type == WTK_TYPE_TEXT) {

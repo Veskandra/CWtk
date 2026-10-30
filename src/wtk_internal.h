@@ -58,11 +58,28 @@ typedef struct WtkTimer {
     void *userdata;
 } WtkTimer;
 
-typedef struct WtkMenuCommand {
-    UINT id;
+typedef struct WtkShortcut {
+    int vk;
+    unsigned mods;
     WtkMenuFn callback;
     void *userdata;
-} WtkMenuCommand;
+} WtkShortcut;
+
+struct WtkMenu;
+
+struct WtkMenuAction {
+    UINT id;
+    struct WtkMenu *menu;
+    WtkMenuFn legacy_callback;
+    WtkMenuActionFn callback;
+    void *userdata;
+    char *text;
+    char *shortcut;
+    int checkable;
+    int checked;
+    int radio;
+    int enabled;
+};
 
 struct WtkMenu {
     WtkApp *app;
@@ -71,9 +88,10 @@ struct WtkMenu {
     WtkMenu *parent;
     WtkMenu *first_child;
     WtkMenu *next_sibling;
-    WtkMenuCommand *commands;
-    int command_count;
-    int command_cap;
+    WtkMenuAction **actions;
+    int action_count;
+    int action_cap;
+    UINT item_id;
     int is_bar;
 };
 
@@ -97,6 +115,11 @@ struct WtkApp {
     HTHEME theme_progress;
 
     WtkWidget **windows;
+
+  /* 全局快捷键（wtk_app_add_shortcut） */
+  WtkShortcut *shortcuts;
+  int shortcut_count;
+  int shortcut_cap;
     int window_count;
     int window_cap;
     int open_windows;

@@ -34,6 +34,7 @@ extern "C" {
 typedef struct WtkApp WtkApp;
 typedef struct WtkWidget WtkWidget;
 typedef struct WtkMenu WtkMenu;
+typedef struct WtkMenuAction WtkMenuAction;
 
 #if defined(_MSC_VER)
 #pragma comment(lib, "user32.lib")
@@ -194,7 +195,11 @@ typedef void (*WtkEventFn)(WtkWidget *widget, WtkEvent *event, void *userdata);
 typedef void (*WtkDrawFn)(WtkWidget *canvas, HDC dc, int width, int height,
                           void *userdata);
 typedef void (*WtkTimerFn)(WtkApp *app, void *userdata);
+/* Legacy menu command callback. */
 typedef void (*WtkMenuFn)(WtkWidget *window, void *userdata);
+/* QAction-style callback: the action has already applied its checked state. */
+typedef void (*WtkMenuActionFn)(WtkWidget *window, WtkMenuAction *action,
+                                void *userdata);
 
 /* ------------------------------------------------------------------------- */
 /* Theme                                                                     */
@@ -235,6 +240,11 @@ void wtk_app_free(WtkApp *app);
 
 /* Shows all windows that have not been shown yet, then runs the event loop.
  * Returns the event loop's exit code. */
+/* 注册全局快捷键（焦点在任何控件上都生效）。
+ * vk 是虚拟键码（'S'、VK_F5…），mods 是 WTK_MOD_* 的组合。返回 1 成功。 */
+int wtk_app_add_shortcut(WtkApp *app, int vk, unsigned mods, WtkMenuFn callback,
+                         void *userdata);
+
 int wtk_run(WtkApp *app);
 void wtk_quit(WtkApp *app);
 
@@ -367,14 +377,71 @@ void wtk_window_set_min_size(WtkWidget *window, int width, int height);
 void wtk_window_set_resizable(WtkWidget *window, int resizable);
 void wtk_window_close(WtkWidget *window);
 
-/* Create and attach a menu bar. Menu text may contain '&' mnemonics and a
- * tab-separated accelerator hint such as "&Save\tCtrl+S" (the hint is drawn,
- * but WinTk does not install the keyboard accelerator automatically). */
+/* --- 模态窗口 ---------------------------------------------------------- */
+/* 打开一个窗口时标成模态：框架会禁用同一 App 里其它已显示的窗口，
+ * 窗口被销毁（含点 X）时自动恢复，不会把界面锁死。 */
+void wtk_window_set_modal(WtkWidget *window, int modal);
+int wtk_window_is_modal(WtkWidget *window);
+
+/* --- 指针 / 鼠标捕获（拖拽分栏等用）----------------------------------- */
+/* 让控件抓取鼠标：指针移出控件、甚至移出窗口后仍能收到位置。 */
+void wtk_widget_set_capture(WtkWidget *widget, int on);
+int wtk_widget_has_capture(WtkWidget *widget);
+/* 左键当前是否按下（读本线程消息队列，非全键盘轮询）。 */
+int wtk_mouse_left_down(void);
+/* 光标相对某控件的客户区坐标；成功返回 1。 */
+int wtk_pointer_pos(WtkWidget *widget, int *x, int *y);
+/* 控件客户区尺寸；成功返回 1。 */
+int wtk_widget_client_size(WtkWidget *widget, int *width, int *height);
+/* 把窗口提到前台并设为活动窗口。 */
+void wtk_window_bring_to_front(WtkWidget *widget);
+/* 读窗口标题（UTF-8），返回字节数。 */
+int wtk_window_get_title(WtkWidget *window, char *buf, size_t cap);
+
+/* QMenu-style menu tree. Text may contain '&' mnemonics. A menu bar owns
+ * top-level submenus; each submenu owns its actions. All objects are released
+ * with the window/app. */
 WtkMenu *wtk_menubar(WtkWidget *window);
 WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label);
+WtkMenuAction *wtk_menu_add_action(WtkMenu *menu, const char *text,
+                                   WtkMenuActionFn callback, void *userdata);
+WtkMenuAction *wtk_menu_add_check_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata);
+WtkMenuAction *wtk_menu_add_radio_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata);
+void wtk_menu_add_separator(WtkMenu *menu);
+
+/* Action state, similar to QAction setters. set_text/set_shortcut_hint
+ * return 1 on success. The shortcut hint is display-only; use
+ * wtk_app_add_shortcut() if the key must actually trigger the action. */
+int wtk_menu_action_set_text(WtkMenuAction *action, const char *text);
+const char *wtk_menu_action_get_text(const WtkMenuAction *action);
+int wtk_menu_action_set_shortcut_hint(WtkMenuAction *action,
+                                      const char *hint);
+void wtk_menu_action_set_enabled(WtkMenuAction *action, int enabled);
+int wtk_menu_action_is_enabled(const WtkMenuAction *action);
+void wtk_menu_action_set_checkable(WtkMenuAction *action, int checkable);
+int wtk_menu_action_is_checkable(const WtkMenuAction *action);
+void wtk_menu_action_set_checked(WtkMenuAction *action, int checked);
+int wtk_menu_action_is_checked(const WtkMenuAction *action);
+void wtk_menu_action_trigger(WtkMenuAction *action);
+
+/* Enable/disable a submenu item (top-level or nested). */
+void wtk_menu_set_enabled(WtkMenu *menu, int enabled);
+
+/* Legacy command API. Commands added this way have no action handle. */
 void wtk_menu_add_command(WtkMenu *menu, const char *label, WtkMenuFn callback,
                           void *userdata);
-void wtk_menu_add_separator(WtkMenu *menu);
+/* Legacy index access; index counts command/action items, separators and
+ * submenus are not counted. Prefer WtkMenuAction setters. */
+void wtk_menu_set_item_enabled(WtkMenu *menu, int index, int enabled);
+/* Get the index-th action of a menu (0-based, separators not counted).
+ * Use wtk_menu_action_set_checkable / set_checked to show a check mark. */
+WtkMenuAction *wtk_menu_get_action(WtkMenu *menu, int index);
 
 /* ------------------------------------------------------------------------- */
 /* Widgets                                                                   */

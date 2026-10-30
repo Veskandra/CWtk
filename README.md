@@ -22,6 +22,7 @@
 - **风格绘制可注入**：核心提供 `WtkStylePainter` 绘制钩子；Native/Fusion 是 `styles/` 下的外部 DLL，Designer.exe 只保留加载器，普通 WinTk 程序不会携带这些绘制代码。
 - **Designer 风格插件**：启动时扫描 `styles/*.dll`，动态列出 Windows 原生、Fusion 和 WinTk；支持导入第三方风格 DLL；导出代码可附带内置风格的伴生模块。
 - **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
+- **QMenu 风格菜单**：菜单栏、子菜单、动作句柄、复选/单选、动态启用、快捷键提示和程序触发。
 - **统一事件模型**：CLICK、CHANGE、SUBMIT、FOCUS、鼠标、滚轮、键盘、RESIZE、CLOSE。
 - **键盘可用**：Tab / Shift+Tab 焦点循环、按钮 Enter/Space 激活、方向键操作滑块和单选组、Ctrl+Enter 提交多行文本。
 - **原生输入控件**：编辑框、多行文本和列表框基于 Win32 原生控件，同时拥有 GDI 宿主边框、焦点状态、占位符和统一配色。
@@ -53,6 +54,7 @@ build\hello.exe
 build\form.exe
 build\dashboard.exe
 build\canvas.exe
+build\menu.exe
 build\wintk_gallery.exe
 designer\build\wintk_designer.exe
 designer\build\styles\wintk_builtin_styles.dll

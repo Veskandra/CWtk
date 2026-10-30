@@ -8,7 +8,7 @@
 
 ## 1. 基础类型
 
-### WtkApp / WtkWidget / WtkMenu
+### WtkApp / WtkWidget / WtkMenu / WtkMenuAction
 
 不透明句柄：
 
@@ -16,11 +16,13 @@
 typedef struct WtkApp WtkApp;
 typedef struct WtkWidget WtkWidget;
 typedef struct WtkMenu WtkMenu;
+typedef struct WtkMenuAction WtkMenuAction;
 ```
 
 - `WtkApp` 拥有窗口、控件、菜单、定时器。
 - `WtkWidget` 可能是窗口、容器或具体控件。
-- `WtkMenu` 由对应的 `wtk_menubar()` 创建并拥有。
+- `WtkMenu` 是菜单栏或一个子菜单，由窗口/菜单树拥有。
+- `WtkMenuAction` 是 QAction 风格的动作句柄；同一动作可以查询/修改文本、勾选和启用状态。
 
 ### WtkColor
 
@@ -72,6 +74,8 @@ typedef void (*WtkDrawFn)(WtkWidget *canvas, HDC dc, int width, int height,
                           void *userdata);
 typedef void (*WtkTimerFn)(WtkApp *app, void *userdata);
 typedef void (*WtkMenuFn)(WtkWidget *window, void *userdata);
+typedef void (*WtkMenuActionFn)(WtkWidget *window, WtkMenuAction *action,
+                                void *userdata);
 ```
 
 ### 枚举 / 常量
@@ -177,6 +181,20 @@ const char *wtk_style_name(WtkStyle style);
 - 进入 Win32 消息循环，直到 `wtk_quit()` 或所有窗口关闭。
 - 返回退出消息的 `wParam`；已经运行时返回 `-1`。
 - 在消息循环中接管 Tab / Shift+Tab 焦点切换。
+
+### wtk_app_add_shortcut
+
+```c
+int wtk_app_add_shortcut(WtkApp *app, int vk, unsigned mods,
+                         WtkMenuFn callback, void *userdata);
+```
+
+- 注册应用级快捷键；焦点在任意控件上都生效。
+- `vk` 是 Win32 虚拟键码，例如 `'S'`、`VK_F5`。
+- `mods` 是 `WTK_MOD_CONTROL / WTK_MOD_SHIFT / WTK_MOD_ALT` 的组合。
+- 回调在 UI 线程执行，收到当前前台窗口指针和注册时的 `userdata`。
+- 返回 `1` 表示注册成功；当前没有注销单个快捷键的 API。
+- 菜单里的 `"Ctrl+S"` 只是显示提示；要让按键真正生效，仍要用这个函数注册。
 
 ### wtk_app_free
 
@@ -300,32 +318,206 @@ void wtk_window_close(WtkWidget *window);
 
 窗口关闭后，对应的 `WtkWidget` 内存会在 `wtk_app_free()` 或延迟回收时释放。不要继续调用它的 API。
 
+### 模态窗口和指针辅助
+
+```c
+void wtk_window_set_modal(WtkWidget *window, int modal);
+int  wtk_window_is_modal(WtkWidget *window);
+
+void wtk_widget_set_capture(WtkWidget *widget, int on);
+int  wtk_widget_has_capture(WtkWidget *widget);
+int  wtk_mouse_left_down(void);
+int  wtk_pointer_pos(WtkWidget *widget, int *x, int *y);
+int  wtk_widget_client_size(WtkWidget *widget, int *width, int *height);
+void wtk_window_bring_to_front(WtkWidget *widget);
+int  wtk_window_get_title(WtkWidget *window, char *buf, size_t cap);
+```
+
+- `wtk_window_set_modal(window, 1)` 会禁用同一 App 里其它已显示窗口；模态窗口销毁（包括点 X）时自动恢复，不会锁死界面。
+- 当前一次只维护一个模态窗口；窗口未显示时也可以设置，但只作用于已经显示的其它窗口。
+- `wtk_widget_set_capture()` 用于分隔条拖拽等场景，鼠标移出控件后仍继续收到位置。
+- `wtk_mouse_left_down()` 返回鼠标左键当前是否按下。
+- `wtk_pointer_pos()` 返回相对控件客户区的设备像素坐标，成功返回 `1`。
+- `wtk_widget_client_size()` 返回客户区设备像素尺寸。
+- `wtk_window_get_title()` 把标题写入 UTF-8 缓冲区，返回字节数（不含结尾 0）；`cap` 需要大于 0。
+
 ---
 
-## 5. 菜单
+## 5. 菜单（QMenu 风格）
+
+WinTk 的菜单是 Windows 原生菜单，但 API 采用 QMenu/QAction 风格：
+
+- `WtkMenu`：菜单栏或子菜单。
+- `WtkMenuAction`：可查询状态的命令项。
+- 动作可以有文本、子菜单、复选、单选、启用/禁用状态和快捷键提示。
+
+### 创建菜单树
 
 ```c
 WtkMenu *wtk_menubar(WtkWidget *window);
 WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label);
-void wtk_menu_add_command(WtkMenu *menu, const char *label,
-                          WtkMenuFn callback, void *userdata);
+```
+
+- `wtk_menubar()` 创建并立即挂到窗口；重复调用返回已有菜单栏。
+- `wtk_menu_submenu()` 在父菜单中追加一个弹出菜单。
+- 标签支持 `&` 助记符，例如 `"文件(&F)"`；可以是中文。
+- 菜单栏会自动缩小窗口客户区并触发布局。
+
+### 添加动作
+
+```c
+WtkMenuAction *wtk_menu_add_action(WtkMenu *menu, const char *text,
+                                   WtkMenuActionFn callback, void *userdata);
+WtkMenuAction *wtk_menu_add_check_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata);
+WtkMenuAction *wtk_menu_add_radio_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata);
 void wtk_menu_add_separator(WtkMenu *menu);
 ```
 
-- `wtk_menubar` 会创建并立即挂到窗口；重复调用返回已有菜单栏。
-- 标签支持 `&` 助记符，例如 `"文件(&F)"`；菜单标签可以为中文。
-- 标签中的 `\t` 之后是加速键提示，例如 `"&Save\tCtrl+S"`。该提示目前只绘制，不注册快捷键。
-- 回调收到的是窗口指针。
-- 菜单栏会自动缩小窗口客户区，触发重排。
-- 菜单由 Windows 在窗口销毁时随之销毁；WinTk 只负责释放自己的结构。
-
-示例：
+回调：
 
 ```c
-WtkMenu *bar = wtk_menubar(win);
-WtkMenu *file = wtk_menu_submenu(bar, "文件(&F)");
-wtk_menu_add_command(file, "退出(&X)\tAlt+F4", on_exit, app);
+typedef void (*WtkMenuActionFn)(WtkWidget *window, WtkMenuAction *action,
+                                void *userdata);
 ```
+
+- 点击可勾选动作时，WinTk 先更新 `checked` 状态，再调用回调。
+- 单选动作由同一个菜单里的所有 radio action 组成一组；选中一个会取消同菜单中其它 radio action。
+- 回调收到窗口、动作句柄和注册时传入的 `userdata`。
+- `wtk_menu_add_separator()` 只添加分隔线，不产生动作句柄。
+- 旧的 `wtk_menu_add_command(menu, label, WtkMenuFn, userdata)` 仍可用；它创建的是没有动作句柄的兼容命令。新代码建议用 `wtk_menu_add_action()`。
+
+### 动作状态
+
+```c
+int  wtk_menu_action_set_text(WtkMenuAction *action, const char *text);
+const char *wtk_menu_action_get_text(const WtkMenuAction *action);
+int  wtk_menu_action_set_shortcut_hint(WtkMenuAction *action,
+                                       const char *hint);
+
+void wtk_menu_action_set_enabled(WtkMenuAction *action, int enabled);
+int  wtk_menu_action_is_enabled(const WtkMenuAction *action);
+
+void wtk_menu_action_set_checkable(WtkMenuAction *action, int checkable);
+int  wtk_menu_action_is_checkable(const WtkMenuAction *action);
+void wtk_menu_action_set_checked(WtkMenuAction *action, int checked);
+int  wtk_menu_action_is_checked(const WtkMenuAction *action);
+```
+
+- `set_text()` / `set_shortcut_hint()` 返回 `1` 表示更新成功。
+- 快捷键提示只是显示在菜单项右侧；要真正响应按键，请用 `wtk_app_add_shortcut()` 注册。
+- `set_checked()` 只对 checkable 动作有效；radio 动作会自动处理同组互斥。
+- `wtk_menu_action_set_checkable(action, 0)` 会同时清除 checked/radio 状态。
+- 动作对象由菜单拥有；不要 `free`。
+
+### 子菜单和程序触发
+
+```c
+void wtk_menu_set_enabled(WtkMenu *menu, int enabled);
+void wtk_menu_action_trigger(WtkMenuAction *action);
+
+/* 兼容旧 API：index 只统计 action，分隔线和子菜单不计数。 */
+void wtk_menu_set_item_enabled(WtkMenu *menu, int index, int enabled);
+
+/* 取菜单中的第 index 个 action；分隔线和子菜单不计数。 */
+WtkMenuAction *wtk_menu_get_action(WtkMenu *menu, int index);
+```
+
+- `wtk_menu_set_enabled()` 用于整体启用/禁用某个子菜单项。
+- `wtk_menu_action_trigger()` 等价于用户点击该动作：会切换复选/单选状态并调用回调。
+- 旧索引接口适合已有代码；新代码优先保存 `WtkMenuAction` 句柄。
+- `wtk_menu_get_action()` 可按索引取回动作；用旧 `wtk_menu_add_command()` 添加的命令也会得到动作句柄，但回调仍是 `WtkMenuFn` 形式。
+
+### 快捷键
+
+菜单里的 `"Ctrl+S"` 是显示提示，不会自动注册加速键。需要真正响应时：
+
+```c
+wtk_menu_action_set_shortcut_hint(save_action, "Ctrl+S");
+wtk_app_add_shortcut(app, 'S', WTK_MOD_CONTROL, on_save_shortcut, state);
+```
+
+`wtk_app_add_shortcut()` 的回调类型是 `WtkMenuFn`：
+
+```c
+static void on_save_shortcut(WtkWidget *window, void *userdata);
+```
+
+### 完整示例
+
+```c
+typedef struct MenuState {
+    WtkWidget *status;
+    WtkMenuAction *dark_theme;
+} MenuState;
+
+static void on_save(WtkWidget *window, WtkMenuAction *action, void *data)
+{
+    MenuState *state = data;
+    (void)window;
+    (void)action;
+    wtk_label_set_text(state->status, "保存完成");
+}
+
+static void on_auto_save(WtkWidget *window, WtkMenuAction *action, void *data)
+{
+    MenuState *state = data;
+    (void)window;
+    wtk_label_set_text(state->status,
+                       wtk_menu_action_is_checked(action)
+                           ? "自动保存已开启"
+                           : "自动保存已关闭");
+}
+
+static void on_theme(WtkWidget *window, WtkMenuAction *action, void *data)
+{
+    MenuState *state = data;
+    (void)window;
+    wtk_label_set_text(state->status,
+                       action == state->dark_theme ? "深色主题" : "浅色主题");
+}
+
+static void on_exit(WtkWidget *window, WtkMenuAction *action, void *data)
+{
+    (void)action;
+    (void)data;
+    wtk_quit(wtk_widget_app(window));
+}
+
+static void build_menu(WtkWidget *window, MenuState *state)
+{
+    WtkMenu *bar = wtk_menubar(window);
+    WtkMenu *file = wtk_menu_submenu(bar, "文件(&F)");
+    WtkMenu *edit = wtk_menu_submenu(bar, "编辑(&E)");
+    WtkMenuAction *save;
+
+    save = wtk_menu_add_action(file, "保存(&S)", on_save, state);
+    wtk_menu_action_set_shortcut_hint(save, "Ctrl+S");
+    wtk_menu_add_separator(file);
+    wtk_menu_add_action(file, "退出(&X)", on_exit, state);
+
+    wtk_menu_add_check_action(edit, "自动保存(&A)", 1, on_auto_save, state);
+    wtk_menu_add_separator(edit);
+    wtk_menu_add_radio_action(edit, "浅色主题", 1, on_theme, state);
+    state->dark_theme =
+        wtk_menu_add_radio_action(edit, "深色主题", 0, on_theme, state);
+}
+```
+
+完整可运行版本见 [examples/menu.c](../examples/menu.c)。
+
+### 注意事项
+
+- 菜单使用 Windows 原生弹出菜单，不会跟随 `WtkStylePainter` 重绘。
+- 一个菜单内的所有 radio action 视为同一组；需要多个互斥组时放到不同子菜单。
+- 动作文本里的 `\t` 可以作为兼容的分隔符；新代码建议用 `set_shortcut_hint()`。
+- 菜单项不支持图标、隐藏（visible）或自定义绘制；这些是原生菜单限制。
+- 菜单和动作随窗口/App 释放，不要手动销毁。
 
 ---
 
@@ -679,7 +871,7 @@ wtk_widget_set_padding(card, 20, 20, 20, 20);
 | Slider | CHANGE、鼠标、键盘、焦点 |
 | Progress | 鼠标事件（无焦点） |
 | Canvas | 鼠标、滚轮、键盘、FOCUS、RESIZE |
-| Menu | 命令回调 |
+| Menu | 菜单命令 / QAction 回调 |
 
 不是每个事件都对所有控件有意义；例如输入控件的 `CHANGE` 由原生控件通知驱动。
 
@@ -760,7 +952,7 @@ Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/win
 
 - 默认 UI 字体随 Windows 界面语言变化；如果需要所有语言下完全一致的字形，必须显式指定字体。
 - 中文输入依赖原生 EDIT；自绘控件不是文本输入控件。
-- 菜单加速键只显示提示，不注册全局加速键。
+- 菜单动作的快捷键提示只负责显示；实际按键需用 `wtk_app_add_shortcut()` 注册。
 - 不支持滚动容器和内容虚拟化。
 - `pack` 的混合方向布局与 Tk 的完整算法不完全相同。
 - `place` 只做固定坐标放置，不支持 anchor、比例尺寸或随父容器重排。

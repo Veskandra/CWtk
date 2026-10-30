@@ -23,6 +23,7 @@ HELLO    := $(BUILD)/hello.exe
 FORM     := $(BUILD)/form.exe
 DASHBOARD:= $(BUILD)/dashboard.exe
 CANVAS   := $(BUILD)/canvas.exe
+MENU     := $(BUILD)/menu.exe
 DESIGNER := designer/build/wintk_designer.exe
 
 CPPFLAGS += -DUNICODE -D_UNICODE -Iinclude -Isrc
@@ -41,10 +42,10 @@ LIB_SRCS := \
 
 LIB_OBJS := $(patsubst src/%.c,$(OBJDIR)/%.o,$(LIB_SRCS))
 
-.PHONY: all gallery hello form dashboard canvas designer library run \
-	run-form run-dashboard run-canvas run-designer clean
+.PHONY: all gallery hello form dashboard canvas menu designer library run \
+	run-form run-dashboard run-canvas run-menu run-designer clean
 
-all: library gallery hello form dashboard canvas designer
+all: library gallery hello form dashboard canvas menu designer
 
 library: $(LIB)
 
@@ -57,6 +58,8 @@ form: $(FORM)
 dashboard: $(DASHBOARD)
 
 canvas: $(CANVAS)
+
+menu: $(MENU)
 
 designer:
 	$(MAKE) -C designer
@@ -88,6 +91,9 @@ $(DASHBOARD): examples/dashboard.c $(LIB) $(RES) | $(BUILD)
 $(CANVAS): examples/canvas.c $(LIB) $(RES) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(MENU): examples/menu.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
 run: $(GALLERY)
 	@start "" "$(GALLERY)"
 
@@ -99,6 +105,9 @@ run-dashboard: $(DASHBOARD)
 
 run-canvas: $(CANVAS)
 	@start "" "$(CANVAS)"
+
+run-menu: $(MENU)
+	@start "" "$(MENU)"
 
 run-designer: designer
 	@start "" "$(DESIGNER)"

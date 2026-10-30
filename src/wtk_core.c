@@ -1,5 +1,11 @@
 #include "wtk_internal.h"
 
+/* 模态窗口状态（wtk_window_set_modal / wtk__modal_release 使用） */
+static WtkWidget *g_modal_window = NULL;
+static HWND g_modal_disabled[32];
+static int g_modal_disabled_count = 0;
+void wtk__modal_release(void);
+
 #ifndef WTK_CLASS_WINDOW
 #define WTK_CLASS_WINDOW  L"WinTkTopLevel"
 #define WTK_CLASS_MESSAGE L"WinTkMessage"
@@ -815,6 +821,7 @@ void wtk_app_free(WtkApp *app)
         wtk__free_widget_tree(app->windows[i]);
 
     free(app->windows);
+    free(app->shortcuts);
     free(app->graveyard);
     free(app->ui_font_family_utf8);
     free(app);
@@ -1163,6 +1170,8 @@ static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam,
             if (window->app->open_windows > 0)
                 window->app->open_windows--;
         }
+        if (window == g_modal_window)
+            wtk__modal_release(); /* 模态窗口被关掉：自动恢复其它窗口 */
         window->shown = 0;
         window->hwnd = NULL;
         if (window->app->running && window->app->open_windows == 0 &&
@@ -1210,7 +1219,10 @@ WtkWidget *wtk_window(WtkApp *app, const char *title, int width, int height)
     wtitle = wtk__u8_to_u16(title ? title : "");
     style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 
-    hwnd = CreateWindowExW(0, WTK_CLASS_WINDOW, wtitle,
+    /* WS_EX_COMPOSITED：让 Windows 把整窗（含所有子窗口）双缓冲合成后再显示。
+     * 拖动分栏等高频重排时，子窗口不会各自先擦后画，视觉上就没有闪烁。
+     * 只影响绘制路径，不改布局/交互，风险很低。 */
+    hwnd = CreateWindowExW(WS_EX_COMPOSITED, WTK_CLASS_WINDOW, wtitle,
                            style, CW_USEDEFAULT, CW_USEDEFAULT,
                            physical_w, physical_h,
                            NULL, NULL, app->instance, window);
@@ -1310,6 +1322,153 @@ void wtk_window_set_resizable(WtkWidget *window, int resizable)
                      SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
+/* ==========================================================================
+ * 模态窗口 + 指针/捕获辅助
+ *
+ * 以前这些是让应用层自己去调 EnableWindow / SetCapture / GetCursorPos，
+ * 既不统一也容易漏掉恢复。放在框架里由窗口生命周期统一管理：
+ * 模态窗口被销毁时（包括点 X）会自动恢复其它窗口，不会把界面锁死。
+ * ========================================================================== */
+
+void wtk_window_set_modal(WtkWidget *window, int modal)
+{
+    int i;
+
+    if (modal) {
+        if (!window || window->type != WTK_TYPE_WINDOW || !window->hwnd)
+            return;
+        if (g_modal_window)
+            return; /* 已经有一个模态窗口了 */
+        g_modal_window = window;
+        g_modal_disabled_count = 0;
+        /* 禁用同一 App 里其它所有已显示的窗口 */
+        for (i = 0; i < window->app->window_count; i++) {
+            WtkWidget *other = window->app->windows[i];
+            if (!other || other == window || !other->hwnd || !other->shown)
+                continue;
+            if (g_modal_disabled_count >= 32)
+                break;
+            EnableWindow(other->hwnd, FALSE);
+            g_modal_disabled[g_modal_disabled_count++] = other->hwnd;
+        }
+        /* 模态窗口自身置顶到属主之前 */
+        SetWindowPos(window->hwnd, HWND_TOP, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        return;
+    }
+
+    if (g_modal_window != window)
+        return;
+    wtk__modal_release();
+}
+
+/* 内部：释放模态（窗口销毁时也会调） */
+void wtk__modal_release(void)
+{
+    int i;
+    for (i = 0; i < g_modal_disabled_count; i++) {
+        if (g_modal_disabled[i] && IsWindow(g_modal_disabled[i]))
+            EnableWindow(g_modal_disabled[i], TRUE);
+    }
+    g_modal_disabled_count = 0;
+    if (g_modal_window) {
+        HWND self = g_modal_window->hwnd;
+        g_modal_window = NULL;
+        /* 焦点还给主窗口 */
+        if (self && IsWindow(self)) {
+            HWND owner = GetWindow(self, GW_OWNER);
+            if (owner && IsWindow(owner)) {
+                SetForegroundWindow(owner);
+                SetActiveWindow(owner);
+            }
+        }
+    }
+}
+
+int wtk_window_is_modal(WtkWidget *window)
+{
+    return window && window == g_modal_window;
+}
+
+/* 鼠标捕获：拖拽分栏之类需要鼠标离开控件后仍收得到位置 */
+void wtk_widget_set_capture(WtkWidget *widget, int on)
+{
+    if (!widget || !widget->hwnd)
+        return;
+    if (on) {
+        SetCapture(widget->hwnd);
+    } else if (GetCapture() == widget->hwnd) {
+        ReleaseCapture();
+    }
+}
+
+int wtk_widget_has_capture(WtkWidget *widget)
+{
+    return widget && widget->hwnd && GetCapture() == widget->hwnd;
+}
+
+/* 左键是否仍按着（读本线程消息队列状态，不是全键盘轮询） */
+int wtk_mouse_left_down(void)
+{
+    return (GetKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0;
+}
+
+/* 光标的客户区坐标（相对任意控件） */
+int wtk_pointer_pos(WtkWidget *widget, int *x, int *y)
+{
+    POINT p;
+    if (!widget || !widget->hwnd)
+        return 0;
+    if (!GetCursorPos(&p))
+        return 0;
+    if (!ScreenToClient(widget->hwnd, &p))
+        return 0;
+    if (x)
+        *x = p.x;
+    if (y)
+        *y = p.y;
+    return 1;
+}
+
+/* 窗口/控件客户区尺寸 */
+int wtk_widget_client_size(WtkWidget *widget, int *width, int *height)
+{
+    RECT rc;
+    if (!widget || !widget->hwnd)
+        return 0;
+    if (!GetClientRect(widget->hwnd, &rc))
+        return 0;
+    if (width)
+        *width = rc.right - rc.left;
+    if (height)
+        *height = rc.bottom - rc.top;
+    return 1;
+}
+
+void wtk_window_bring_to_front(WtkWidget *widget)
+{
+    if (!widget || !widget->hwnd)
+        return;
+    SetForegroundWindow(widget->hwnd);
+    SetActiveWindow(widget->hwnd);
+}
+
+int wtk_window_get_title(WtkWidget *window, char *buf, size_t cap)
+{
+    WCHAR wt[512];
+    int n;
+    if (!window || !window->hwnd || !buf || cap == 0)
+        return 0;
+    wt[0] = 0;
+    GetWindowTextW(window->hwnd, wt, 511);
+    n = WideCharToMultiByte(CP_UTF8, 0, wt, -1, buf, (int)cap, NULL, NULL);
+    if (n <= 0) {
+        buf[0] = 0;
+        return 0;
+    }
+    return n - 1;
+}
+
 void wtk_window_close(WtkWidget *window)
 {
     if (!window || window->type != WTK_TYPE_WINDOW || !window->hwnd)
@@ -1356,6 +1515,7 @@ WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label)
 {
     WtkMenu *menu;
     WCHAR *wlabel;
+    UINT id;
     if (!parent || !parent->handle)
         return NULL;
 
@@ -1363,6 +1523,10 @@ WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label)
     menu->app = parent->app;
     menu->window = parent->window;
     menu->parent = parent;
+    id = parent->app->next_menu_id++;
+    if (parent->app->next_menu_id < 1000)
+        parent->app->next_menu_id = 1000;
+    menu->item_id = id;
     menu->handle = CreatePopupMenu();
     if (!menu->handle) {
         free(menu);
@@ -1370,7 +1534,8 @@ WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label)
     }
 
     wlabel = wtk__u8_to_u16(label ? label : "");
-    if (!AppendMenuW(parent->handle, MF_POPUP, (UINT_PTR)menu->handle, wlabel)) {
+    if (!AppendMenuW(parent->handle, MF_POPUP | MF_STRING,
+                     (UINT_PTR)menu->handle, wlabel)) {
         free(wlabel);
         DestroyMenu(menu->handle);
         free(menu);
@@ -1391,59 +1556,379 @@ WtkMenu *wtk_menu_submenu(WtkMenu *parent, const char *label)
     return menu;
 }
 
-static WtkMenu *menu_find_by_id(WtkMenu *menu, UINT id,
-                                WtkMenuCommand **command)
+static char *menu_dup_text(const char *text)
 {
-    int i;
-    WtkMenu *child;
-    if (!menu)
+    size_t len;
+    char *copy;
+    if (!text)
         return NULL;
-    for (i = 0; i < menu->command_count; ++i) {
-        if (menu->commands[i].id == id) {
-            if (command)
-                *command = &menu->commands[i];
-            return menu;
+    len = strlen(text);
+    copy = (char *)malloc(len + 1);
+    if (!copy)
+        return NULL;
+    memcpy(copy, text, len + 1);
+    return copy;
+}
+
+static WCHAR *menu_action_display(const WtkMenuAction *action)
+{
+    const char *text = action && action->text ? action->text : "";
+    const char *shortcut = action && action->shortcut ? action->shortcut : "";
+    WCHAR *wtext = wtk__u8_to_u16(text);
+    WCHAR *wshortcut = NULL;
+    WCHAR *display;
+    size_t text_len;
+    size_t shortcut_len = 0;
+
+    if (!wtext)
+        return NULL;
+    if (shortcut[0])
+        wshortcut = wtk__u8_to_u16(shortcut);
+    text_len = wcslen(wtext);
+    if (wshortcut)
+        shortcut_len = wcslen(wshortcut) + 1;
+    display = (WCHAR *)malloc((text_len + shortcut_len + 1) * sizeof(WCHAR));
+    if (!display) {
+        free(wtext);
+        free(wshortcut);
+        return NULL;
+    }
+    wcscpy(display, wtext);
+    if (wshortcut) {
+        wcscat(display, L"\t");
+        wcscat(display, wshortcut);
+    }
+    free(wtext);
+    free(wshortcut);
+    return display;
+}
+
+static int menu_action_refresh(WtkMenuAction *action)
+{
+    MENUITEMINFOW item;
+    WCHAR *display;
+    int ok;
+    if (!action || !action->menu || !action->menu->handle)
+        return 0;
+    display = menu_action_display(action);
+    if (!display)
+        return 0;
+    memset(&item, 0, sizeof(item));
+    item.cbSize = sizeof(item);
+    item.fMask = MIIM_STRING;
+    item.dwTypeData = display;
+    ok = SetMenuItemInfoW(action->menu->handle, action->id, FALSE, &item);
+    free(display);
+    if (ok && action->menu->window)
+        DrawMenuBar(action->menu->window);
+    return ok;
+}
+
+static void menu_action_apply_flags(WtkMenuAction *action)
+{
+    MENUITEMINFOW item;
+    UINT flags = MF_BYCOMMAND;
+    if (!action || !action->menu || !action->menu->handle)
+        return;
+    if (action->checkable) {
+        flags |= action->checked ? MF_CHECKED : MF_UNCHECKED;
+        CheckMenuItem(action->menu->handle, action->id, flags);
+    }
+    EnableMenuItem(action->menu->handle, action->id,
+                   MF_BYCOMMAND |
+                       (action->enabled ? MF_ENABLED : MF_GRAYED));
+    if (action->radio) {
+        memset(&item, 0, sizeof(item));
+        item.cbSize = sizeof(item);
+        item.fMask = MIIM_FTYPE;
+        item.fType = MFT_RADIOCHECK;
+        SetMenuItemInfoW(action->menu->handle, action->id, FALSE, &item);
+    }
+}
+
+static void menu_radio_select(WtkMenuAction *action);
+
+static WtkMenuAction *menu_add_action(WtkMenu *menu, const char *text,
+                                      int checkable, int radio, int checked,
+                                      WtkMenuActionFn callback,
+                                      WtkMenuFn legacy_callback,
+                                      void *userdata)
+{
+    WtkMenuAction *action;
+    WCHAR *wtext;
+    UINT id;
+    UINT flags;
+
+    if (!menu || !menu->handle || (!callback && !legacy_callback))
+        return NULL;
+    action = (WtkMenuAction *)wtk__alloc_zero(sizeof(*action));
+    if (!action)
+        return NULL;
+    action->menu = menu;
+    action->legacy_callback = legacy_callback;
+    action->callback = callback;
+    action->userdata = userdata;
+    action->checkable = !!checkable;
+    action->radio = !!radio;
+    action->checked = checkable && checked;
+    action->enabled = 1;
+    action->text = menu_dup_text(text ? text : "");
+    if (!action->text) {
+        free(action);
+        return NULL;
+    }
+    wtext = menu_action_display(action);
+
+    id = menu->app->next_menu_id++;
+    if (menu->app->next_menu_id < 1000)
+        menu->app->next_menu_id = 1000;
+    action->id = id;
+
+    if (menu->action_count >= menu->action_cap) {
+        int cap = menu->action_cap ? menu->action_cap * 2 : 8;
+        WtkMenuAction **grown = (WtkMenuAction **)wtk__realloc_array(
+            menu->actions, (size_t)cap * sizeof(*grown));
+        if (!grown) {
+            free(action->text);
+            free(action);
+            free(wtext);
+            return NULL;
         }
+        menu->actions = grown;
+        menu->action_cap = cap;
     }
-    for (child = menu->first_child; child; child = child->next_sibling) {
-        WtkMenu *found = menu_find_by_id(child, id, command);
-        if (found)
-            return found;
+    menu->actions[menu->action_count++] = action;
+
+    flags = MF_STRING | (action->checked ? MF_CHECKED : 0);
+    if (!wtext ||
+        !AppendMenuW(menu->handle, flags, (UINT_PTR)id, wtext)) {
+        menu->action_count--;
+        free(wtext);
+        free(action->text);
+        free(action);
+        return NULL;
     }
-    return NULL;
+    free(wtext);
+    if (action->radio && action->checked) {
+        menu_radio_select(action);
+        menu_action_apply_flags(action);
+    } else {
+        menu_action_apply_flags(action);
+    }
+    if (menu->window)
+        DrawMenuBar(menu->window);
+    return action;
+}
+
+WtkMenuAction *wtk_menu_add_action(WtkMenu *menu, const char *text,
+                                   WtkMenuActionFn callback, void *userdata)
+{
+    return menu_add_action(menu, text, 0, 0, 0, callback, NULL, userdata);
+}
+
+WtkMenuAction *wtk_menu_add_check_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata)
+{
+    return menu_add_action(menu, text, 1, 0, checked, callback, NULL,
+                           userdata);
+}
+
+WtkMenuAction *wtk_menu_add_radio_action(WtkMenu *menu, const char *text,
+                                         int checked,
+                                         WtkMenuActionFn callback,
+                                         void *userdata)
+{
+    return menu_add_action(menu, text, 1, 1, checked, callback, NULL,
+                           userdata);
 }
 
 void wtk_menu_add_command(WtkMenu *menu, const char *label, WtkMenuFn callback,
                           void *userdata)
 {
-    WCHAR *wlabel;
-    UINT id;
-    if (!menu || !menu->handle)
+    (void)menu_add_action(menu, label, 0, 0, 0, NULL, callback, userdata);
+}
+
+const char *wtk_menu_action_get_text(const WtkMenuAction *action)
+{
+    return action && action->text ? action->text : "";
+}
+
+int wtk_menu_action_set_text(WtkMenuAction *action, const char *text)
+{
+    char *copy;
+    if (!action)
+        return 0;
+    copy = menu_dup_text(text);
+    if (!copy)
+        return 0;
+    free(action->text);
+    action->text = copy;
+    return menu_action_refresh(action);
+}
+
+int wtk_menu_action_set_shortcut_hint(WtkMenuAction *action, const char *hint)
+{
+    char *copy;
+    if (!action)
+        return 0;
+    copy = hint && hint[0] ? menu_dup_text(hint) : NULL;
+    free(action->shortcut);
+    action->shortcut = copy;
+    return menu_action_refresh(action);
+}
+
+void wtk_menu_action_set_enabled(WtkMenuAction *action, int enabled)
+{
+    if (!action)
         return;
+    action->enabled = !!enabled;
+    menu_action_apply_flags(action);
+    if (action->menu->window)
+        DrawMenuBar(action->menu->window);
+}
 
-    id = menu->app->next_menu_id++;
-    if (menu->app->next_menu_id < 1000)
-        menu->app->next_menu_id = 1000;
+int wtk_menu_action_is_enabled(const WtkMenuAction *action)
+{
+    return action && action->enabled;
+}
 
-    if (menu->command_count >= menu->command_cap) {
-        int new_cap = menu->command_cap ? menu->command_cap * 2 : 8;
-        menu->commands = (WtkMenuCommand *)wtk__realloc_array(
-            menu->commands, (size_t)new_cap * sizeof(WtkMenuCommand));
-        menu->command_cap = new_cap;
+void wtk_menu_action_set_checkable(WtkMenuAction *action, int checkable)
+{
+    if (!action)
+        return;
+    action->checkable = !!checkable;
+    if (!action->checkable) {
+        action->checked = 0;
+        action->radio = 0;
+        CheckMenuItem(action->menu->handle, action->id,
+                      MF_BYCOMMAND | MF_UNCHECKED);
     }
-    menu->commands[menu->command_count].id = id;
-    menu->commands[menu->command_count].callback = callback;
-    menu->commands[menu->command_count].userdata = userdata;
-    menu->command_count++;
+    menu_action_apply_flags(action);
+    if (action->menu->window)
+        DrawMenuBar(action->menu->window);
+}
 
-    wlabel = wtk__u8_to_u16(label ? label : "");
-    if (!AppendMenuW(menu->handle, MF_STRING, (UINT_PTR)id, wlabel)) {
-        menu->command_count--;
+int wtk_menu_action_is_checkable(const WtkMenuAction *action)
+{
+    return action && action->checkable;
+}
+
+static void menu_radio_select(WtkMenuAction *action)
+{
+    WtkMenu *menu;
+    int i;
+    if (!action || !action->menu)
+        return;
+    menu = action->menu;
+    for (i = 0; i < menu->action_count; ++i) {
+        WtkMenuAction *other = menu->actions[i];
+        if (!other || other == action || !other->radio)
+            continue;
+        other->checked = 0;
+        CheckMenuItem(menu->handle, other->id,
+                      MF_BYCOMMAND | MF_UNCHECKED);
     }
-    free(wlabel);
+    action->checked = 1;
+    CheckMenuItem(menu->handle, action->id, MF_BYCOMMAND | MF_CHECKED);
+}
 
+void wtk_menu_action_set_checked(WtkMenuAction *action, int checked)
+{
+    if (!action || !action->checkable)
+        return;
+    if (action->radio && checked)
+        menu_radio_select(action);
+    else {
+        action->checked = !!checked;
+        CheckMenuItem(action->menu->handle, action->id,
+                      MF_BYCOMMAND |
+                          (action->checked ? MF_CHECKED : MF_UNCHECKED));
+    }
+    if (action->menu->window)
+        DrawMenuBar(action->menu->window);
+}
+
+int wtk_menu_action_is_checked(const WtkMenuAction *action)
+{
+    return action && action->checked;
+}
+
+static void menu_dispatch_action(WtkWidget *window, WtkMenuAction *action)
+{
+    if (!window || !action || !window->app)
+        return;
+    if (action->checkable) {
+        if (action->radio)
+            menu_radio_select(action);
+        else
+            wtk_menu_action_set_checked(action, !action->checked);
+    }
+    wtk__begin_dispatch(window->app);
+    if (action->callback)
+        action->callback(window, action, action->userdata);
+    else if (action->legacy_callback)
+        action->legacy_callback(window, action->userdata);
+    wtk__end_dispatch(window->app);
+}
+
+void wtk_menu_action_trigger(WtkMenuAction *action)
+{
+    WtkWidget *window;
+    if (!action || !action->menu)
+        return;
+    window = wtk__window_from_hwnd(action->menu->app, action->menu->window);
+    if (window)
+        menu_dispatch_action(window, action);
+}
+
+WtkMenuAction *wtk_menu_get_action(WtkMenu *menu, int index)
+{
+    if (!menu || index < 0 || index >= menu->action_count)
+        return NULL;
+    return menu->actions[index];
+}
+
+void wtk_menu_set_enabled(WtkMenu *menu, int enabled)
+{
+    if (!menu || !menu->parent || !menu->parent->handle || !menu->item_id)
+        return;
+    EnableMenuItem(menu->parent->handle, menu->item_id,
+                   MF_BYCOMMAND | (enabled ? MF_ENABLED : MF_GRAYED));
     if (menu->window)
         DrawMenuBar(menu->window);
+}
+
+void wtk_menu_set_item_enabled(WtkMenu *menu, int index, int enabled)
+{
+    if (!menu || index < 0 || index >= menu->action_count ||
+        !menu->actions[index])
+        return;
+    wtk_menu_action_set_enabled(menu->actions[index], enabled);
+}
+
+static WtkMenu *menu_find_by_id(WtkMenu *menu, UINT id,
+                                WtkMenuAction **action_out)
+{
+    int i;
+    WtkMenu *child;
+    if (!menu)
+        return NULL;
+    for (i = 0; i < menu->action_count; ++i) {
+        WtkMenuAction *action = menu->actions[i];
+        if (action && action->id == id) {
+            if (action_out)
+                *action_out = action;
+            return menu;
+        }
+    }
+    for (child = menu->first_child; child; child = child->next_sibling) {
+        WtkMenu *found = menu_find_by_id(child, id, action_out);
+        if (found)
+            return found;
+    }
+    return NULL;
 }
 
 void wtk_menu_add_separator(WtkMenu *menu)
@@ -1457,24 +1942,30 @@ void wtk_menu_add_separator(WtkMenu *menu)
 
 void wtk__handle_menu_command(WtkWidget *window, UINT id)
 {
-    WtkMenuCommand *command = NULL;
+    WtkMenuAction *action = NULL;
     if (!window || !window->menu)
         return;
-    if (!menu_find_by_id(window->menu, id, &command) || !command)
+    if (!menu_find_by_id(window->menu, id, &action) || !action)
         return;
-    wtk__begin_dispatch(window->app);
-    if (command->callback)
-        command->callback(window, command->userdata);
-    wtk__end_dispatch(window->app);
+    menu_dispatch_action(window, action);
 }
 
 void wtk__free_menu_tree(WtkMenu *menu)
 {
     while (menu) {
         WtkMenu *next = menu->next_sibling;
+        int i;
         if (menu->first_child)
             wtk__free_menu_tree(menu->first_child);
-        free(menu->commands);
+        for (i = 0; i < menu->action_count; ++i) {
+            WtkMenuAction *action = menu->actions[i];
+            if (action) {
+                free(action->text);
+                free(action->shortcut);
+                free(action);
+            }
+        }
+        free(menu->actions);
         free(menu);
         menu = next;
     }
@@ -1653,6 +2144,68 @@ static int window_has_live_hwnd(WtkWidget *window)
     return window && window->hwnd && IsWindow(window->hwnd);
 }
 
+/* ------------------------------------------------------------------------- */
+/* 全局快捷键                                                                */
+/* ------------------------------------------------------------------------- */
+
+static int shortcut_match(const WtkShortcut *s, int vk, unsigned mods)
+{
+    if (!s || s->vk != vk)
+        return 0;
+    return (s->mods & (WTK_MOD_CONTROL | WTK_MOD_SHIFT | WTK_MOD_ALT)) ==
+           (mods & (WTK_MOD_CONTROL | WTK_MOD_SHIFT | WTK_MOD_ALT));
+}
+
+/* 内部：命中就执行并返回 1（消息不再下发） */
+static int wtk__handle_shortcut(WtkApp *app, int vk, unsigned mods)
+{
+    int i;
+    if (!app)
+        return 0;
+    for (i = 0; i < app->shortcut_count; i++) {
+        if (shortcut_match(&app->shortcuts[i], vk, mods)) {
+            WtkMenuFn cb = app->shortcuts[i].callback;
+            void *ud = app->shortcuts[i].userdata;
+            WtkWidget *win = NULL;
+            int j;
+            for (j = 0; j < app->window_count; j++) {
+                WtkWidget *w = app->windows[j];
+                if (w && w->shown && w->hwnd) {
+                    win = w;
+                    break;
+                }
+            }
+            if (cb)
+                cb(win, ud);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int wtk_app_add_shortcut(WtkApp *app, int vk, unsigned mods, WtkMenuFn callback,
+                         void *userdata)
+{
+    WtkShortcut *s;
+    if (!app || !callback || vk == 0)
+        return 0;
+    if (app->shortcut_count >= app->shortcut_cap) {
+        int cap = app->shortcut_cap ? app->shortcut_cap * 2 : 8;
+        WtkShortcut *grown = (WtkShortcut *)realloc(app->shortcuts,
+                                                   (size_t)cap * sizeof(WtkShortcut));
+        if (!grown)
+            return 0;
+        app->shortcuts = grown;
+        app->shortcut_cap = cap;
+    }
+    s = &app->shortcuts[app->shortcut_count++];
+    s->vk = vk;
+    s->mods = mods;
+    s->callback = callback;
+    s->userdata = userdata;
+    return 1;
+}
+
 int wtk_run(WtkApp *app)
 {
     MSG msg;
@@ -1685,6 +2238,17 @@ int wtk_run(WtkApp *app)
 
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         int is_tab = (msg.message == WM_KEYDOWN) && msg.wParam == VK_TAB;
+        if (msg.message == WM_KEYDOWN) {
+            unsigned mods = 0;
+            if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetAsyncKeyState(VK_CONTROL) & 0x8000))
+                mods |= WTK_MOD_CONTROL;
+            if ((GetKeyState(VK_SHIFT) & 0x8000) || (GetAsyncKeyState(VK_SHIFT) & 0x8000))
+                mods |= WTK_MOD_SHIFT;
+            if ((GetKeyState(VK_MENU) & 0x8000) || (GetAsyncKeyState(VK_MENU) & 0x8000))
+                mods |= WTK_MOD_ALT;
+            if (wtk__handle_shortcut(app, (int)msg.wParam, mods))
+                continue; /* 已由快捷键处理，不再下发给控件 */
+        }
         if (is_tab && !(GetKeyState(VK_CONTROL) & 0x8000) &&
             !(GetKeyState(VK_MENU) & 0x8000)) {
             WtkWidget *window = wtk__window_from_hwnd(app, msg.hwnd);

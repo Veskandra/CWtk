@@ -8,6 +8,7 @@
 | 表单 | [form.c](../examples/form.c) | 布局、输入校验、密码框、复选框、焦点、消息框 |
 | 任务面板 | [dashboard.c](../examples/dashboard.c) | 列表、滑块、进度条、定时器、状态同步 |
 | 交互画布 | [canvas.c](../examples/canvas.c) | Canvas 绘制、鼠标事件、GDI、坐标归一化 |
+| QMenu 菜单 | [menu.c](../examples/menu.c) | 菜单栏、子菜单、动作、复选、单选、快捷键 |
 | Designer 导出 | 由 Designer 生成 | `wtk_place`、伴生风格模块、构建命令 |
 
 构建全部示例：
@@ -18,6 +19,7 @@ build\hello.exe
 build\form.exe
 build\dashboard.exe
 build\canvas.exe
+build\menu.exe
 ```
 
 也可以单独构建：
@@ -26,6 +28,7 @@ build\canvas.exe
 mingw32-make form
 mingw32-make dashboard
 mingw32-make canvas
+mingw32-make menu
 ```
 
 CMake 构建后程序位于 `build-cmake\bin\`。
@@ -345,7 +348,70 @@ GDI 对象用完要恢复并删除，示例里使用 `SelectObject` 保存旧对
 
 ---
 
-## 5. 使用 Designer 导出的代码
+## 5. QMenu 风格菜单
+
+![菜单示例](example-menu.png)
+
+源码：[examples/menu.c](../examples/menu.c)
+
+菜单栏、子菜单和动作：
+
+```c
+WtkMenu *bar = wtk_menubar(window);
+WtkMenu *file = wtk_menu_submenu(bar, "文件(&F)");
+WtkMenuAction *save;
+
+save = wtk_menu_add_action(file, "保存(&S)", on_save, &state);
+wtk_menu_action_set_shortcut_hint(save, "Ctrl+S");
+
+wtk_menu_add_separator(file);
+wtk_menu_add_action(file, "退出(&X)", on_exit, &state);
+```
+
+复选和单选：
+
+```c
+WtkMenuAction *auto_save =
+    wtk_menu_add_check_action(edit, "自动保存(&A)", 1, on_auto_save, &state);
+WtkMenuAction *light =
+    wtk_menu_add_radio_action(edit, "浅色主题", 1, on_theme, &state);
+WtkMenuAction *dark =
+    wtk_menu_add_radio_action(edit, "深色主题", 0, on_theme, &state);
+```
+
+回调签名是 `WtkMenuActionFn`，动作状态在回调前已经更新：
+
+```c
+static void on_auto_save(WtkWidget *window, WtkMenuAction *action, void *data)
+{
+    MenuState *state = data;
+    (void)window;
+    wtk_label_set_text(state->status,
+                       wtk_menu_action_is_checked(action)
+                           ? "已开启自动保存"
+                           : "已关闭自动保存");
+}
+```
+
+运行时修改：
+
+```c
+wtk_menu_action_set_enabled(save, 0);
+wtk_menu_action_set_text(save, "保存全部");
+wtk_menu_action_trigger(auto_save);   /* 等价点击，会切换勾选并回调 */
+```
+
+菜单中的 `Ctrl+S` 只是显示提示；实际按键需要：
+
+```c
+wtk_app_add_shortcut(app, 'S', WTK_MOD_CONTROL, on_ctrl_s, &state);
+```
+
+完整 API 说明见 [API.md 的菜单章节](API.md#5-菜单qmenu-风格)。
+
+---
+
+## 6. 使用 Designer 导出的代码
 
 Designer 导出的 `page.c` 可以直接作为独立程序编译。页面使用 `wtk_place` 绝对布局：
 

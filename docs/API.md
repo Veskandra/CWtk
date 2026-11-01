@@ -295,7 +295,7 @@ WtkWidgetKind wtk_widget_kind(WtkWidget *widget);
   - hover/pressed/focused/checked/selected/enabled
   - 按钮样式、焦点环、进度、滑块值和只读/密码状态
 - 注册 painter 会立即刷新现有窗口；传 `NULL` 清除 painter，自绘控件只保留宿主背景。
-- `designer/styles/designer_style.c` 是内置 Native/Fusion 画笔的源码，`designer/styles/wintk_classic_draw.c` 是原 WinTk 自绘风格；两者编译成 `wintk_builtin_styles.dll`，不进入 Designer.exe。
+- `designer/styles/designer_style.c` 只包含内置 Native/Fusion 画笔，编译成 `wintk_builtin_styles.dll`；原 WinTk 自绘在独立插件 `wintk_classic_style.dll`（源码 `wintk_classic_plugin.c` + `wintk_classic_draw.c`）。两者都不进入 Designer.exe，也不进入 `libwintk.a`。
 
 ### 风格插件 DLL
 
@@ -324,7 +324,7 @@ __declspec(dllexport) const WtkStylePlugin *wintk_style_plugin_get(void);
 - `theme` 和 `painter` 必须保持有效直到 DLL 被卸载；Designer 在进程生命周期内保持 DLL 加载。
 - Designer 启动时扫描 `styles/*.dll`，风格菜单动态列出插件；菜单末尾的“导入风格 DLL...”可加载任意位置的新插件。
 - 外部插件可完全基于公开的 `WtkPaintState` 实现 painter，不依赖 WinTk 内部头文件。
-- 内置 DLL 返回 `native`、`fusion` 和 `wintk`（经典自绘）三个风格；经典自绘的 painter 在 `wintk_classic_draw.c`。
+- `wintk_builtin_styles.dll` 返回 `native`、`fusion`；`wintk_classic_style.dll` 单独返回 `wintk`（经典自绘）。
 
 ### 尺寸与字体辅助
 

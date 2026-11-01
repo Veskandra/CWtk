@@ -173,12 +173,13 @@ wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
+    -DWINTK_STYLE_CLASSIC_COMPANION ^
     page.c designer\styles\designer_style.c ^
     designer\styles\wintk_classic_draw.c build\libwintk.a ^
     -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 ```
 
-WinTk 自绘风格现在也是 `wintk_classic_draw.c` 提供的 painter；Native/Fusion/自绘都通过伴生模块或 `wintk_builtin_styles.dll` 加载。
+WinTk 自绘风格在独立的 `wintk_classic_style.dll` 里（源码 `wintk_classic_draw.c`），不会混入 `libwintk.a` 或 `wintk_builtin_styles.dll`；伴生编译时加 `-DWINTK_STYLE_CLASSIC_COMPANION`。
 
 设计器子项目可以单独构建：
 
@@ -286,9 +287,9 @@ wtk_app_set_style_painter(app, &wintk_classic_painter, NULL); /* 旧 WinTk 风�
 ```
 
 - 核心不包含 Native/Fusion/Classic 的控件绘制代码；旧 WinTk 绘制现在是插件里的 `wintk_classic_painter`。
-- 内置风格作为 DLL 插件放在 `styles/`：`designer/build/styles/wintk_builtin_styles.dll`。Designer.exe 只保留插件加载器。
+- 风格插件放在 `styles/`：`wintk_builtin_styles.dll`（Native/Fusion）和独立的 `wintk_classic_style.dll`（WinTk 自绘）。Designer.exe 只保留插件加载器。
 - Designer 的“风格”菜单动态列出 `styles/*.dll` 中的插件；菜单末尾有“导入风格 DLL...”。
-- 内置 DLL 提供 Windows 原生、Fusion 和 WinTk 自绘三个风格；它们都通过 painter 绘制自绘控件。
+- 旧 WinTk 自绘不进入 `libwintk.a`，也不混入 `wintk_builtin_styles.dll`。
 - 原生控件模式下，painter 不会接管 Label/Button/Checkbox/Radio/Slider/Progress/Separator；这些是系统控件。要使用画笔，请先切到 `WTK_CONTROLS_CUSTOM`。
 - `WTK_STYLE_*` 和 `wtk_app_set_style()` 保留为兼容性“风格提示”，本身不会改变核心绘制；必须注册 painter 才有 Native/Fusion/Classic 效果。
 - `WtkStylePainter` 提供 `paint(widget, hdc, bounds, state)` 和可选的 `field_metrics(...)`；`state` 暴露控件类型、文本、字体、颜色、状态、值和尺寸。

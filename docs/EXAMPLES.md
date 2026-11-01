@@ -488,6 +488,7 @@ static void build_page(WtkWidget *window)
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
+    -DWINTK_STYLE_CLASSIC_COMPANION ^
     page.c designer\styles\designer_style.c ^
     designer\styles\wintk_classic_draw.c build\libwintk.a ^
     -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32

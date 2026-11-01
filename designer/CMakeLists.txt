@@ -63,7 +63,6 @@ target_include_directories(wintk_designer PRIVATE
 
 add_library(wintk_builtin_styles SHARED
     styles/designer_style.c
-    styles/wintk_classic_draw.c
 )
 target_include_directories(wintk_builtin_styles PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/styles"
@@ -86,7 +85,32 @@ set_target_properties(wintk_builtin_styles PROPERTIES
     PREFIX ""
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/styles"
 )
-add_dependencies(wintk_designer wintk_builtin_styles)
+add_library(wintk_classic_styles SHARED
+    styles/wintk_classic_plugin.c
+    styles/wintk_classic_draw.c
+)
+target_include_directories(wintk_classic_styles PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/styles"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(wintk_classic_styles PRIVATE UNICODE _UNICODE)
+if(MSVC)
+    target_compile_options(wintk_classic_styles PRIVATE /W4)
+else()
+    target_compile_options(wintk_classic_styles PRIVATE
+        -Wall -Wextra -Wpedantic
+    )
+endif()
+target_link_libraries(wintk_classic_styles PRIVATE
+    ${WINTK_DESIGNER_FRAMEWORK}
+)
+set_target_properties(wintk_classic_styles PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "wintk_classic_style"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/styles"
+)
+add_dependencies(wintk_designer wintk_builtin_styles wintk_classic_styles)
 target_compile_definitions(wintk_designer PRIVATE UNICODE _UNICODE)
 if(MSVC)
     target_compile_options(wintk_designer PRIVATE /W4)

@@ -2937,6 +2937,8 @@ static int designer_add_style_plugin(Designer *designer, const WCHAR *path,
                     if (src->theme)
                         existing->theme = src->theme;
                 }
+                if (first < 0)
+                    first = j;
                 break;
             }
             continue;

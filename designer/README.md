@@ -58,7 +58,7 @@ CMake 产物同样包含 `designer\build-cmake\bin\styles\wintk_builtin_styles.d
 
 - `Windows 原生`：内置 DLL 实现 UxTheme 原生外观的自绘画笔
 - `Fusion`：内置 DLL 实现中性灰 Qt Fusion 方向外观
-- `WinTk`：内置 DLL 的经典自绘 painter（`wintk_classic_draw.c`）
+- `WinTk`：独立 `wintk_classic_style.dll` 的经典自绘 painter（`wintk_classic_draw.c`）
 - 外部业务风格：菜单“导入风格 DLL...”选择插件后立即加入列表
 
 Designer 会扫描 exe 同目录的 `styles/*.dll`。移动 Designer 时请把 `styles` 文件夹一起复制。插件 ABI 和编写方式见 `styles/README.md`。
@@ -77,6 +77,7 @@ designer\build\wintk_designer.exe
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
+    -DWINTK_STYLE_CLASSIC_COMPANION ^
     page.c designer\styles\designer_style.c ^
     designer\styles\wintk_classic_draw.c build\libwintk.a ^
     -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32

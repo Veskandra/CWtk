@@ -1516,7 +1516,9 @@ const WtkStylePainter designer_style_painter = {
     designer_style_field_metrics
 };
 
+#ifdef WINTK_STYLE_CLASSIC_COMPANION
 extern const WtkStylePainter wintk_classic_painter;
+#endif
 
 void designer_style_apply(WtkApp *app, DesignerStyle style)
 {
@@ -1533,7 +1535,11 @@ void designer_style_apply(WtkApp *app, DesignerStyle style)
     } else if (style == DESIGNER_STYLE_WINTK) {
         wtk_theme_default(&theme);
         wtk_app_set_theme(app, &theme);
+#ifdef WINTK_STYLE_CLASSIC_COMPANION
         wtk_app_set_style_painter(app, &wintk_classic_painter, NULL);
+#else
+        wtk_app_set_style_painter(app, NULL, NULL);
+#endif
         wtk_app_set_style(app, WTK_STYLE_WINTK);
     } else {
         wtk_theme_native(&theme);
@@ -1545,7 +1551,6 @@ void designer_style_apply(WtkApp *app, DesignerStyle style)
 
 static WtkTheme style_native_theme;
 static WtkTheme style_fusion_theme;
-static WtkTheme style_wintk_theme;
 static int style_themes_ready;
 
 static void style_plugin_init_themes(void)
@@ -1554,7 +1559,6 @@ static void style_plugin_init_themes(void)
         return;
     wtk_theme_native(&style_native_theme);
     wtk_theme_fusion(&style_fusion_theme);
-    wtk_theme_default(&style_wintk_theme);
     style_themes_ready = 1;
 }
 
@@ -1562,9 +1566,7 @@ static const WtkStylePluginStyle style_entries[] = {
     { "native", "Windows 原生", WTK_STYLE_NATIVE, &style_native_theme,
       &designer_style_painter },
     { "fusion", "Fusion", WTK_STYLE_FUSION, &style_fusion_theme,
-      &designer_style_painter },
-    { "wintk", "WinTk 自绘", WTK_STYLE_WINTK, &style_wintk_theme,
-      &wintk_classic_painter }
+      &designer_style_painter }
 };
 
 static const WtkStylePlugin style_plugin = {

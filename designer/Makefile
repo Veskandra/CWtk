@@ -14,6 +14,7 @@ OBJDIR   := $(BUILD)/obj
 STYLEDIR := $(BUILD)/styles
 EXE      := $(BUILD)/wintk_designer.exe
 STYLE_DLL:= $(STYLEDIR)/wintk_builtin_styles.dll
+CLASSIC_DLL:= $(STYLEDIR)/wintk_classic_style.dll
 RES      := $(BUILD)/wintk-res.o
 
 CPPFLAGS += -DUNICODE -D_UNICODE -I$(ROOT)/include -I$(ROOT)/src -Isrc \
@@ -33,11 +34,12 @@ LIB_SRCS := \
 
 LIB_OBJS := $(patsubst $(ROOT)/src/%.c,$(OBJDIR)/lib_%.o,$(LIB_SRCS))
 APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o
-STYLE_OBJ := $(OBJDIR)/designer_style.o $(OBJDIR)/wintk_classic_draw.o
+STYLE_OBJ := $(OBJDIR)/designer_style.o
+CLASSIC_OBJS := $(OBJDIR)/wintk_classic_plugin.o $(OBJDIR)/wintk_classic_draw.o
 
 .PHONY: all clean run
 
-all: $(EXE) $(STYLE_DLL)
+all: $(EXE) $(STYLE_DLL) $(CLASSIC_DLL)
 
 $(BUILD) $(OBJDIR) $(STYLEDIR):
 	@if not exist "$@" mkdir "$@"
@@ -62,6 +64,10 @@ $(OBJDIR)/wintk_classic_draw.o: styles/wintk_classic_draw.c \
 		$(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
+$(OBJDIR)/wintk_classic_plugin.o: styles/wintk_classic_plugin.c \
+		styles/style_plugin.h $(ROOT)/include/wintk.h | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
 $(RES): $(ROOT)/resources/wintk.rc $(ROOT)/resources/wintk.manifest $(ROOT)/resources/wintk.ico | $(BUILD)
 	$(WINDRES) -I $(ROOT)/resources -O coff $< -o $@
 
@@ -70,6 +76,10 @@ $(EXE): $(APP_OBJS) $(LIB_OBJS) $(RES) | $(BUILD)
 
 $(STYLE_DLL): $(STYLE_OBJ) $(LIB_OBJS) | $(STYLEDIR)
 	$(CC) -shared $(STYLE_OBJ) $(LIB_OBJS) -o $@ \
+		-static-libgcc -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
+
+$(CLASSIC_DLL): $(CLASSIC_OBJS) $(LIB_OBJS) | $(STYLEDIR)
+	$(CC) -shared $(CLASSIC_OBJS) $(LIB_OBJS) -o $@ \
 		-static-libgcc -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 
 run: $(EXE) $(STYLE_DLL)

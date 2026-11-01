@@ -597,7 +597,8 @@ int designer_generate_c(const DesignDoc *doc, char *buffer, size_t capacity)
                 " * comctl32, uxtheme, shell32, d2d1, ole32 and the WinTk static library.\n"
                 " * Also compile designer/styles/designer_style.c and\n"
                 " * designer/styles/wintk_classic_draw.c (companion style\n"
-                " * module) with -Iinclude -Isrc -Idesigner/styles.\n"
+                " * module) with -DWINTK_STYLE_CLASSIC_COMPANION,\n"
+                " * -Iinclude -Isrc -Idesigner/styles.\n"
                 " */\n"
                 "#include \"wintk.h\"\n"
                 "#include \"designer_style.h\"\n\n");

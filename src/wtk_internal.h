@@ -9,6 +9,7 @@
 #endif
 
 #include "wintk.h"
+#include <d2d1.h>
 
 #include <commctrl.h>
 #include <uxtheme.h>
@@ -106,6 +107,11 @@ struct WtkApp {
 
     WtkStyle style_requested;
     WtkStyle style_resolved;
+    WtkRenderer renderer;
+    ID2D1Factory *d2d_factory;
+    ID2D1DCRenderTarget *d2d_target;
+    int d2d_com_initialized;
+    int d2d_failed;
     int theme_custom;
     const WtkStylePainter *style_painter;
     void *style_painter_data;
@@ -252,6 +258,8 @@ struct WtkWidget {
     int password;
     int suppress_change;
     int bulk_depth;
+    WtkD2DDrawFn d2d_draw_callback;
+    void *d2d_draw_data;
     /* 虚拟列表（LBS_NODATA）：>0 表示启用 */
     int virtual_count;
     WtkListItemFn item_draw;
@@ -330,6 +338,8 @@ WtkWidget *wtk__window_from_hwnd(WtkApp *app, HWND hwnd);
 void wtk__focus_next(WtkWidget *window, int reverse);
 void wtk__free_menu_tree(WtkMenu *menu);
 void wtk__handle_menu_command(WtkWidget *window, UINT id);
+int wtk__d2d_ensure(WtkApp *app);
+void wtk__d2d_release(WtkApp *app);
 void wtk__sweep_graveyard(WtkApp *app);
 void wtk__queue_graveyard(WtkWidget *widget);
 void wtk__free_widget_tree(WtkWidget *widget);

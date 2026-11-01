@@ -36,7 +36,7 @@ else()
     )
     target_compile_definitions(wintk_designer_framework PUBLIC UNICODE _UNICODE)
     target_link_libraries(wintk_designer_framework
-        PUBLIC user32 gdi32 comctl32 uxtheme shell32
+        PUBLIC user32 gdi32 comctl32 uxtheme shell32 d2d1 ole32
     )
     if(MSVC)
         target_compile_options(wintk_designer_framework PRIVATE /W4)

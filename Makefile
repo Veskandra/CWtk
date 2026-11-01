@@ -24,6 +24,7 @@ FORM     := $(BUILD)/form.exe
 DASHBOARD:= $(BUILD)/dashboard.exe
 CANVAS   := $(BUILD)/canvas.exe
 MENU     := $(BUILD)/menu.exe
+D2D      := $(BUILD)/d2d.exe
 DESIGNER := designer/build/wintk_designer.exe
 
 CPPFLAGS += -DUNICODE -D_UNICODE -Iinclude -Isrc
@@ -31,7 +32,7 @@ CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS   += -finput-charset=UTF-8 -fexec-charset=UTF-8
 LDFLAGS  += -mwindows -static-libgcc
-LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
+LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 
 LIB_SRCS := \
 	src/wtk_core.c \
@@ -42,10 +43,10 @@ LIB_SRCS := \
 
 LIB_OBJS := $(patsubst src/%.c,$(OBJDIR)/%.o,$(LIB_SRCS))
 
-.PHONY: all gallery hello form dashboard canvas menu designer library run \
-	run-form run-dashboard run-canvas run-menu run-designer clean
+.PHONY: all gallery hello form dashboard canvas menu d2d designer library run \
+	run-form run-dashboard run-canvas run-menu run-d2d run-designer clean
 
-all: library gallery hello form dashboard canvas menu designer
+all: library gallery hello form dashboard canvas menu d2d designer
 
 library: $(LIB)
 
@@ -60,6 +61,8 @@ dashboard: $(DASHBOARD)
 canvas: $(CANVAS)
 
 menu: $(MENU)
+
+d2d: $(D2D)
 
 designer:
 	$(MAKE) -C designer
@@ -94,6 +97,9 @@ $(CANVAS): examples/canvas.c $(LIB) $(RES) | $(BUILD)
 $(MENU): examples/menu.c $(LIB) $(RES) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(D2D): examples/d2d.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+
 run: $(GALLERY)
 	@start "" "$(GALLERY)"
 
@@ -108,6 +114,9 @@ run-canvas: $(CANVAS)
 
 run-menu: $(MENU)
 	@start "" "$(MENU)"
+
+run-d2d: $(D2D)
+	@start "" "$(D2D)"
 
 run-designer: designer
 	@start "" "$(DESIGNER)"

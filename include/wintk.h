@@ -127,6 +127,14 @@ typedef enum WtkStyle {
     WTK_STYLE_FUSION
 } WtkStyle;
 
+/* GDI is the default. D2D uses a Direct2D DC render target for custom-drawn
+ * widgets (shapes are antialiased); native EDIT/LISTBOX children and GDI
+ * style painters keep their existing path. */
+typedef enum WtkRenderer {
+    WTK_RENDERER_GDI = 0,
+    WTK_RENDERER_D2D
+} WtkRenderer;
+
 typedef enum WtkIcon {
     WTK_ICON_NONE = 0,
     WTK_ICON_INFO,
@@ -237,6 +245,11 @@ void wtk_theme_native(WtkTheme *theme);
 
 WtkApp *wtk_app_new(void);
 void wtk_app_free(WtkApp *app);
+
+/* Select the renderer for core-drawn widgets. Returns 1 if the requested
+ * renderer is active; if D2D initialization fails the app stays on GDI. */
+int wtk_app_set_renderer(WtkApp *app, WtkRenderer renderer);
+WtkRenderer wtk_app_get_renderer(WtkApp *app);
 
 /* Shows all windows that have not been shown yet, then runs the event loop.
  * Returns the event loop's exit code. */
@@ -594,6 +607,17 @@ void wtk_progress_set_show_percent(WtkWidget *progress, int show);
 
 /* Canvas. The draw callback receives a double-buffered HDC in device pixels. */
 void wtk_canvas_set_draw(WtkWidget *canvas, WtkDrawFn callback, void *userdata);
+
+/* Optional Direct2D canvas callback. It receives a D2D render target already
+ * bound to the canvas DC and the physical pixel size. Text is not provided by
+ * this API; use IDWriteFactory if you need D2D text, or GDI text through the
+ * HDC callback instead. Setting a D2D callback takes precedence over HDC. */
+struct ID2D1RenderTarget;
+typedef void (*WtkD2DDrawFn)(WtkWidget *canvas,
+                             struct ID2D1RenderTarget *target,
+                             int width, int height, void *userdata);
+void wtk_canvas_set_draw_d2d(WtkWidget *canvas, WtkD2DDrawFn callback,
+                             void *userdata);
 void wtk_canvas_redraw(WtkWidget *canvas);
 
 /* ------------------------------------------------------------------------- */

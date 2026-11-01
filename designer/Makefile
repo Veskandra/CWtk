@@ -22,7 +22,7 @@ CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS   += -finput-charset=UTF-8 -fexec-charset=UTF-8
 LDFLAGS  += -mwindows -static-libgcc
-LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme -lcomdlg32 -lshell32
+LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme -lcomdlg32 -lshell32 -ld2d1 -lole32
 
 LIB_SRCS := \
 	$(ROOT)/src/wtk_core.c \
@@ -65,7 +65,7 @@ $(EXE): $(APP_OBJS) $(LIB_OBJS) $(RES) | $(BUILD)
 
 $(STYLE_DLL): $(STYLE_OBJ) $(LIB_OBJS) | $(STYLEDIR)
 	$(CC) -shared $(STYLE_OBJ) $(LIB_OBJS) -o $@ \
-		-static-libgcc -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
+		-static-libgcc -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 
 run: $(EXE) $(STYLE_DLL)
 	@start "" "$(EXE)"

@@ -34,7 +34,7 @@ target_include_directories(wintk
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_compile_definitions(wintk PUBLIC UNICODE _UNICODE)
-target_link_libraries(wintk PUBLIC user32 gdi32 comctl32 uxtheme shell32)
+target_link_libraries(wintk PUBLIC user32 gdi32 comctl32 uxtheme shell32 d2d1 ole32)
 
 if(MSVC)
     target_compile_options(wintk PRIVATE /W4)
@@ -87,6 +87,13 @@ add_executable(menu WIN32
 target_link_libraries(menu PRIVATE WinTk::wintk)
 target_include_directories(menu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
+add_executable(d2d WIN32
+    examples/d2d.c
+    ${WINTK_RESOURCE}
+)
+target_link_libraries(d2d PRIVATE WinTk::wintk)
+target_include_directories(d2d PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
 if(MINGW)
     # Keep the examples self-contained (no libgcc_s DLL next to the .exe).
     target_link_options(hello PRIVATE -static-libgcc)
@@ -95,6 +102,7 @@ if(MINGW)
     target_link_options(dashboard PRIVATE -static-libgcc)
     target_link_options(canvas PRIVATE -static-libgcc)
     target_link_options(menu PRIVATE -static-libgcc)
+    target_link_options(d2d PRIVATE -static-libgcc)
 endif()
 
 # WinTk Designer is a separate subproject. It can also be configured directly:

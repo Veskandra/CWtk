@@ -751,6 +751,7 @@ WtkApp *wtk_app_new(void)
     app->next_timer_id = 1;
     app->style_requested = style_from_environment();
     app->style_resolved = resolve_style(app->style_requested);
+    app->renderer = WTK_RENDERER_GDI;
     app->theme_custom = 0;
     wtk_theme_default(&app->theme);
     wcsncpy(app->ui_font_family, choose_ui_font_family(),
@@ -826,7 +827,109 @@ void wtk_app_free(WtkApp *app)
     free(app->shortcuts);
     free(app->graveyard);
     free(app->ui_font_family_utf8);
+    wtk__d2d_release(app);
     free(app);
+}
+
+int wtk__d2d_ensure(WtkApp *app)
+{
+    HRESULT hr;
+    D2D1_RENDER_TARGET_PROPERTIES props;
+
+    if (!app)
+        return 0;
+    if (app->d2d_target)
+        return 1;
+    if (app->d2d_failed)
+        return 0;
+
+    if (!app->d2d_factory) {
+        hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+        if (hr == S_OK || hr == S_FALSE)
+            app->d2d_com_initialized = 1;
+        else if (hr != RPC_E_CHANGED_MODE) {
+            app->d2d_failed = 1;
+            return 0;
+        }
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                               &IID_ID2D1Factory, NULL,
+                               (void **)&app->d2d_factory);
+        if (FAILED(hr) || !app->d2d_factory) {
+            app->d2d_failed = 1;
+            return 0;
+        }
+    }
+
+    memset(&props, 0, sizeof(props));
+    props.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+    props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    props.dpiX = 96.0f;
+    props.dpiY = 96.0f;
+    props.usage = D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE;
+    props.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+    hr = app->d2d_factory->lpVtbl->CreateDCRenderTarget(
+        app->d2d_factory, &props, &app->d2d_target);
+    if (FAILED(hr) || !app->d2d_target) {
+        app->d2d_target = NULL;
+        app->d2d_failed = 1;
+        return 0;
+    }
+    return 1;
+}
+
+void wtk__d2d_release(WtkApp *app)
+{
+    if (!app)
+        return;
+    if (app->d2d_target) {
+        ID2D1DCRenderTarget_Release(app->d2d_target);
+        app->d2d_target = NULL;
+    }
+    if (app->d2d_factory) {
+        ID2D1Factory_Release(app->d2d_factory);
+        app->d2d_factory = NULL;
+    }
+    if (app->d2d_com_initialized) {
+        CoUninitialize();
+        app->d2d_com_initialized = 0;
+    }
+}
+
+static void invalidate_all_windows(WtkApp *app)
+{
+    int i;
+    if (!app)
+        return;
+    for (i = 0; i < app->window_count; ++i) {
+        WtkWidget *window = app->windows[i];
+        if (window && window->hwnd)
+            RedrawWindow(window->hwnd, NULL, NULL,
+                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+    }
+}
+
+int wtk_app_set_renderer(WtkApp *app, WtkRenderer renderer)
+{
+    if (!app)
+        return 0;
+    if (renderer == WTK_RENDERER_D2D) {
+        if (!wtk__d2d_ensure(app)) {
+            app->renderer = WTK_RENDERER_GDI;
+            invalidate_all_windows(app);
+            return 0;
+        }
+        app->renderer = WTK_RENDERER_D2D;
+    } else {
+        app->renderer = WTK_RENDERER_GDI;
+    }
+    invalidate_all_windows(app);
+    return 1;
+}
+
+WtkRenderer wtk_app_get_renderer(WtkApp *app)
+{
+    return app ? app->renderer : WTK_RENDERER_GDI;
 }
 
 static void refresh_theme_tree(WtkWidget *widget)

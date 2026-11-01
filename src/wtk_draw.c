@@ -1,4 +1,225 @@
+#define INITGUID 1
 #include "wtk_internal.h"
+
+/* ------------------------------------------------------------------------- */
+/* Direct2D bridge                                                           */
+/* ------------------------------------------------------------------------- */
+
+static ID2D1DCRenderTarget *g_d2d_target;
+static ID2D1RenderTarget *g_d2d_render_target;
+static WtkApp *g_d2d_app;
+static int g_d2d_active;
+
+static D2D1_COLOR_F d2d_color(WtkColor color)
+{
+    D2D1_COLOR_F out;
+    out.r = (float)((color >> 16) & 0xFF) / 255.0f;
+    out.g = (float)((color >> 8) & 0xFF) / 255.0f;
+    out.b = (float)(color & 0xFF) / 255.0f;
+    out.a = 1.0f;
+    return out;
+}
+
+static D2D1_RECT_F d2d_rect(const RECT *rect)
+{
+    D2D1_RECT_F out;
+    out.left = (float)rect->left;
+    out.top = (float)rect->top;
+    out.right = (float)rect->right;
+    out.bottom = (float)rect->bottom;
+    return out;
+}
+
+static ID2D1Brush *d2d_brush(WtkColor color)
+{
+    ID2D1SolidColorBrush *solid = NULL;
+    ID2D1Brush *brush = NULL;
+    D2D1_COLOR_F c;
+    if (!g_d2d_render_target)
+        return NULL;
+    c = d2d_color(color);
+    if (FAILED(g_d2d_render_target->lpVtbl->CreateSolidColorBrush(
+            g_d2d_render_target, &c, NULL, &solid)))
+        return NULL;
+    if (FAILED(ID2D1SolidColorBrush_QueryInterface(
+            solid, &IID_ID2D1Brush, (void **)&brush)) ||
+        !brush) {
+        ID2D1SolidColorBrush_Release(solid);
+        return NULL;
+    }
+    ID2D1SolidColorBrush_Release(solid);
+    return brush;
+}
+
+static void d2d_release_target(WtkApp *app)
+{
+    if (g_d2d_render_target) {
+        ID2D1RenderTarget_Release(g_d2d_render_target);
+        g_d2d_render_target = NULL;
+    }
+    if (g_d2d_target) {
+        ID2D1DCRenderTarget_Release(g_d2d_target);
+        g_d2d_target = NULL;
+        if (app)
+            app->d2d_target = NULL;
+    }
+}
+
+static void d2d_end(void)
+{
+    if (!g_d2d_active)
+        return;
+    g_d2d_active = 0;
+    if (g_d2d_render_target) {
+        HRESULT hr = g_d2d_render_target->lpVtbl->EndDraw(
+            g_d2d_render_target, NULL, NULL);
+        if (FAILED(hr)) {
+            WtkApp *app = g_d2d_app;
+            d2d_release_target(app);
+        } else {
+            ID2D1RenderTarget_Release(g_d2d_render_target);
+            g_d2d_render_target = NULL;
+        }
+    }
+    g_d2d_app = NULL;
+}
+
+static void d2d_flush(void)
+{
+    d2d_end();
+}
+
+static int d2d_begin(WtkApp *app, HDC dc, int width, int height)
+{
+    RECT rc;
+    D2D1_MATRIX_3X2_F identity;
+    identity.m11 = 1.0f;
+    identity.m12 = 0.0f;
+    identity.m21 = 0.0f;
+    identity.m22 = 1.0f;
+    identity.dx = 0.0f;
+    identity.dy = 0.0f;
+    if (!app || !dc || width <= 0 || height <= 0 || g_d2d_active)
+        return 0;
+    if (!wtk__d2d_ensure(app))
+        return 0;
+    if (!app->d2d_target)
+        return 0;
+    g_d2d_target = app->d2d_target;
+    if (FAILED(ID2D1DCRenderTarget_QueryInterface(
+            g_d2d_target, &IID_ID2D1RenderTarget,
+            (void **)&g_d2d_render_target)) ||
+        !g_d2d_render_target) {
+        g_d2d_target = NULL;
+        return 0;
+    }
+    rc.left = 0;
+    rc.top = 0;
+    rc.right = width;
+    rc.bottom = height;
+    if (FAILED(g_d2d_target->lpVtbl->BindDC(g_d2d_target, dc, &rc))) {
+        d2d_release_target(app);
+        return 0;
+    }
+    g_d2d_render_target->lpVtbl->SetDpi(g_d2d_render_target, 96.0f, 96.0f);
+    g_d2d_render_target->lpVtbl->SetTransform(g_d2d_render_target, &identity);
+    g_d2d_render_target->lpVtbl->SetAntialiasMode(
+        g_d2d_render_target, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    g_d2d_render_target->lpVtbl->BeginDraw(g_d2d_render_target);
+    g_d2d_app = app;
+    g_d2d_active = 1;
+    return 1;
+}
+
+static void d2d_fill_rect(RECT rect, WtkColor color)
+{
+    ID2D1Brush *brush = d2d_brush(color);
+    D2D1_RECT_F r = d2d_rect(&rect);
+    if (!brush)
+        return;
+    g_d2d_render_target->lpVtbl->FillRectangle(g_d2d_render_target, &r,
+                                                brush);
+    ID2D1Brush_Release(brush);
+}
+
+static void d2d_round_rect(RECT rect, int radius, int filled,
+                           WtkColor fill_color, int border_width,
+                           WtkColor border_color)
+{
+    D2D1_ROUNDED_RECT rr;
+    ID2D1Brush *brush;
+    if (radius < 0)
+        radius = 0;
+    rr.rect = d2d_rect(&rect);
+    rr.radiusX = (float)radius;
+    rr.radiusY = (float)radius;
+    if (filled) {
+        brush = d2d_brush(fill_color);
+        if (brush) {
+            g_d2d_render_target->lpVtbl->FillRoundedRectangle(
+                g_d2d_render_target, &rr, brush);
+            ID2D1Brush_Release(brush);
+        }
+    }
+    if (border_width > 0) {
+        brush = d2d_brush(border_color);
+        if (brush) {
+            g_d2d_render_target->lpVtbl->DrawRoundedRectangle(
+                g_d2d_render_target, &rr, brush, (float)border_width, NULL);
+            ID2D1Brush_Release(brush);
+        }
+    }
+}
+
+static void d2d_ellipse(RECT rect, int filled, WtkColor fill_color,
+                        int border_width, WtkColor border_color)
+{
+    D2D1_ELLIPSE e;
+    ID2D1Brush *brush;
+    e.point.x = ((float)rect.left + (float)rect.right) / 2.0f;
+    e.point.y = ((float)rect.top + (float)rect.bottom) / 2.0f;
+    e.radiusX = ((float)rect.right - (float)rect.left) / 2.0f;
+    e.radiusY = ((float)rect.bottom - (float)rect.top) / 2.0f;
+    if (filled) {
+        brush = d2d_brush(fill_color);
+        if (brush) {
+            g_d2d_render_target->lpVtbl->FillEllipse(g_d2d_render_target, &e,
+                                                      brush);
+            ID2D1Brush_Release(brush);
+        }
+    }
+    if (border_width > 0) {
+        brush = d2d_brush(border_color);
+        if (brush) {
+            g_d2d_render_target->lpVtbl->DrawEllipse(
+                g_d2d_render_target, &e, brush, (float)border_width, NULL);
+            ID2D1Brush_Release(brush);
+        }
+    }
+}
+
+static void d2d_polyline(const POINT *points, int count, WtkColor color,
+                         int width)
+{
+    ID2D1Brush *brush;
+    int i;
+    if (!points || count < 2)
+        return;
+    brush = d2d_brush(color);
+    if (!brush)
+        return;
+    for (i = 1; i < count; ++i) {
+        D2D1_POINT_2F a;
+        D2D1_POINT_2F b;
+        a.x = (float)points[i - 1].x;
+        a.y = (float)points[i - 1].y;
+        b.x = (float)points[i].x;
+        b.y = (float)points[i].y;
+        g_d2d_render_target->lpVtbl->DrawLine(
+            g_d2d_render_target, a, b, brush, (float)width, NULL);
+    }
+    ID2D1Brush_Release(brush);
+}
 
 /* ------------------------------------------------------------------------- */
 /* Low-level GDI helpers                                                     */
@@ -6,7 +227,12 @@
 
 void wtk__fill_rect_color(HDC dc, const RECT *rect, WtkColor color)
 {
-    HBRUSH brush = CreateSolidBrush(wtk__colorref(color));
+    HBRUSH brush;
+    if (g_d2d_active) {
+        d2d_fill_rect(*rect, color);
+        return;
+    }
+    brush = CreateSolidBrush(wtk__colorref(color));
     FillRect(dc, rect, brush);
     DeleteObject(brush);
 }
@@ -41,6 +267,12 @@ static void draw_round_rect(HDC dc, RECT rect, int radius, int filled,
         InflateRect(&rect, -inset, -inset);
     }
 
+    if (g_d2d_active) {
+        d2d_round_rect(rect, radius, filled, fill_color, border_width,
+                       border_color);
+        return;
+    }
+
     brush = filled ? CreateSolidBrush(wtk__colorref(fill_color))
                    : (HBRUSH)GetStockObject(NULL_BRUSH);
     pen = border_width > 0
@@ -63,14 +295,24 @@ static void draw_round_rect(HDC dc, RECT rect, int radius, int filled,
 static void draw_ellipse(HDC dc, RECT rect, int filled, WtkColor fill_color,
                          int border_width, WtkColor border_color)
 {
-    HBRUSH brush = filled ? CreateSolidBrush(wtk__colorref(fill_color))
+    HBRUSH brush;
+    HPEN pen;
+    HGDIOBJ old_brush;
+    HGDIOBJ old_pen;
+
+    if (g_d2d_active) {
+        d2d_ellipse(rect, filled, fill_color, border_width, border_color);
+        return;
+    }
+
+    brush = filled ? CreateSolidBrush(wtk__colorref(fill_color))
                           : (HBRUSH)GetStockObject(NULL_BRUSH);
-    HPEN pen = border_width > 0
-                   ? CreatePen(PS_SOLID, border_width,
-                               wtk__colorref(border_color))
-                   : (HPEN)GetStockObject(NULL_PEN);
-    HGDIOBJ old_brush = SelectObject(dc, brush);
-    HGDIOBJ old_pen = SelectObject(dc, pen);
+    pen = border_width > 0
+              ? CreatePen(PS_SOLID, border_width,
+                          wtk__colorref(border_color))
+              : (HPEN)GetStockObject(NULL_PEN);
+    old_brush = SelectObject(dc, brush);
+    old_pen = SelectObject(dc, pen);
 
     Ellipse(dc, rect.left, rect.top, rect.right, rect.bottom);
 
@@ -94,6 +336,24 @@ static UINT text_align_flags(WtkAlign align)
     }
 }
 
+static void draw_polyline(HDC dc, const POINT *points, int count,
+                          WtkColor color, int width)
+{
+    HPEN pen;
+    HGDIOBJ old;
+    if (count < 2)
+        return;
+    if (g_d2d_active) {
+        d2d_polyline(points, count, color, width);
+        return;
+    }
+    pen = CreatePen(PS_SOLID, width, wtk__colorref(color));
+    old = SelectObject(dc, pen);
+    Polyline(dc, points, count);
+    SelectObject(dc, old);
+    DeleteObject(pen);
+}
+
 static void draw_text_single(HDC dc, HFONT font, WtkColor color,
                              const WCHAR *text, RECT rect, WtkAlign align,
                              int ellipsis)
@@ -104,6 +364,7 @@ static void draw_text_single(HDC dc, HFONT font, WtkColor color,
     if (ellipsis)
         flags |= DT_END_ELLIPSIS;
 
+    d2d_flush();
     old_font = (HFONT)SelectObject(dc, font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, wtk__colorref(color));
@@ -116,6 +377,7 @@ static void draw_text_block(HDC dc, HFONT font, WtkColor color,
 {
     HFONT old_font;
     UINT flags = DT_WORDBREAK | DT_NOPREFIX | text_align_flags(align);
+    d2d_flush();
     old_font = (HFONT)SelectObject(dc, font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, wtk__colorref(color));
@@ -141,6 +403,7 @@ static WtkColor label_text_color(WtkWidget *widget)
 
 static void draw_focus_rect(HDC dc, RECT rect)
 {
+    d2d_flush();
     InflateRect(&rect, -2, -2);
     DrawFocusRect(dc, &rect);
 }
@@ -175,6 +438,12 @@ void wtk__paint_window_background(WtkWidget *window, HDC dc,
         return;
     }
     color = window->bg_set ? window->bg : window->app->theme.window_bg;
+    if (window->app->renderer == WTK_RENDERER_D2D &&
+        d2d_begin(window->app, dc, window->w, window->h)) {
+        d2d_fill_rect(*bounds, color);
+        d2d_end();
+        return;
+    }
     fill_rect(dc, *bounds, color);
 }
 
@@ -370,23 +639,16 @@ static void paint_checkbox(WtkWidget *widget, HDC dc, const RECT *bounds)
                     border_width, border);
 
     if (widget->checked) {
-        HPEN pen = CreatePen(PS_SOLID,
-                             wtk__scale_widget(widget, 2),
-                             wtk__colorref(widget->enabled
-                                               ? theme->on_accent
-                                               : theme->muted));
-        HGDIOBJ old = SelectObject(dc, pen);
         POINT pts[3];
-        SetROP2(dc, R2_COPYPEN);
         pts[0].x = box.left + box_size * 26 / 100;
         pts[0].y = box.top + box_size * 52 / 100;
         pts[1].x = box.left + box_size * 43 / 100;
         pts[1].y = box.top + box_size * 70 / 100;
         pts[2].x = box.left + box_size * 75 / 100;
         pts[2].y = box.top + box_size * 30 / 100;
-        Polyline(dc, pts, 3);
-        SelectObject(dc, old);
-        DeleteObject(pen);
+        draw_polyline(dc, pts, 3,
+                      widget->enabled ? theme->on_accent : theme->muted,
+                      wtk__scale_widget(widget, 2));
     }
 
     text_rect = rc;
@@ -619,10 +881,18 @@ static void paint_separator(WtkWidget *widget, HDC dc, const RECT *bounds)
 static void paint_canvas(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     WtkColor bg = widget->bg_set ? widget->bg : widget->app->theme.surface;
-    fill_rect(dc, *bounds, bg);
-    if (widget->draw_callback && widget->w > 0 && widget->h > 0) {
-        widget->draw_callback(widget, dc, widget->w, widget->h,
-                              widget->draw_data);
+    if (widget->d2d_draw_callback &&
+        d2d_begin(widget->app, dc, widget->w, widget->h)) {
+        d2d_fill_rect(*bounds, bg);
+        widget->d2d_draw_callback(widget, g_d2d_render_target, widget->w,
+                                  widget->h, widget->d2d_draw_data);
+        d2d_end();
+    } else {
+        fill_rect(dc, *bounds, bg);
+        if (widget->draw_callback && widget->w > 0 && widget->h > 0) {
+            widget->draw_callback(widget, dc, widget->w, widget->h,
+                                  widget->draw_data);
+        }
     }
     if (widget->focused && widget->focus_ring) {
         RECT rc = *bounds;
@@ -651,6 +921,9 @@ void wtk__paint_widget(WtkWidget *widget, HDC dc, const RECT *bounds)
             widget->app->style_painter_data);
         return;
     }
+    if (widget->type != WTK_TYPE_WINDOW && widget->type != WTK_TYPE_CANVAS &&
+        widget->app->renderer == WTK_RENDERER_D2D)
+        d2d_begin(widget->app, dc, widget->w, widget->h);
     switch (widget->type) {
     case WTK_TYPE_WINDOW:
         wtk__paint_window_background(widget, dc, bounds);
@@ -692,4 +965,5 @@ void wtk__paint_widget(WtkWidget *widget, HDC dc, const RECT *bounds)
         fill_rect(dc, *bounds, backdrop_color(widget));
         break;
     }
+    d2d_end();
 }

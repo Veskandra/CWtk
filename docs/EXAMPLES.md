@@ -9,6 +9,7 @@
 | 任务面板 | [dashboard.c](../examples/dashboard.c) | 列表、滑块、进度条、定时器、状态同步 |
 | 交互画布 | [canvas.c](../examples/canvas.c) | Canvas 绘制、鼠标事件、GDI、坐标归一化 |
 | QMenu 菜单 | [menu.c](../examples/menu.c) | 菜单栏、子菜单、动作、复选、单选、快捷键 |
+| Direct2D | [d2d.c](../examples/d2d.c) | D2D 渲染后端、D2D Canvas、抗锯齿形状 |
 | Designer 导出 | 由 Designer 生成 | `wtk_place`、伴生风格模块、构建命令 |
 
 构建全部示例：
@@ -20,6 +21,7 @@ build\form.exe
 build\dashboard.exe
 build\canvas.exe
 build\menu.exe
+build\d2d.exe
 ```
 
 也可以单独构建：
@@ -29,6 +31,7 @@ mingw32-make form
 mingw32-make dashboard
 mingw32-make canvas
 mingw32-make menu
+mingw32-make d2d
 ```
 
 CMake 构建后程序位于 `build-cmake\bin\`。
@@ -411,7 +414,45 @@ wtk_app_add_shortcut(app, 'S', WTK_MOD_CONTROL, on_ctrl_s, &state);
 
 ---
 
-## 6. 使用 Designer 导出的代码
+## 6. Direct2D 渲染
+
+![Direct2D 示例](example-d2d.png)
+
+源码：[examples/d2d.c](../examples/d2d.c)
+
+启用核心控件的 D2D 形状绘制：
+
+```c
+WtkApp *app = wtk_app_new();
+if (!wtk_app_set_renderer(app, WTK_RENDERER_D2D))
+    fprintf(stderr, "D2D unavailable, falling back to GDI\n");
+```
+
+Canvas 使用原生 D2D 目标：
+
+```c
+static void draw(WtkWidget *canvas, ID2D1RenderTarget *target,
+                 int width, int height, void *userdata)
+{
+    D2D1_COLOR_F color = { 0.2f, 0.6f, 1.0f, 0.8f };
+    ID2D1SolidColorBrush *solid = NULL;
+    ID2D1Brush *brush = NULL;
+    D2D1_ELLIPSE circle = { { width / 2.0f, height / 2.0f }, 80.0f, 80.0f };
+
+    target->lpVtbl->CreateSolidColorBrush(target, &color, NULL, &solid);
+    ID2D1SolidColorBrush_QueryInterface(solid, &IID_ID2D1Brush,
+                                        (void **)&brush);
+    target->lpVtbl->FillEllipse(target, &circle, brush);
+    ID2D1Brush_Release(brush);
+    ID2D1SolidColorBrush_Release(solid);
+}
+
+wtk_canvas_set_draw_d2d(canvas, draw, NULL);
+```
+
+使用 D2D 回调的源文件要自行 `#include <d2d1.h>`；链接 `d2d1` 和 `ole32`。
+
+## 7. 使用 Designer 导出的代码
 
 Designer 导出的 `page.c` 可以直接作为独立程序编译。页面使用 `wtk_place` 绝对布局：
 

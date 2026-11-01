@@ -1437,6 +1437,16 @@ void wtk_canvas_set_draw(WtkWidget *canvas, WtkDrawFn callback,
     wtk__invalidate(canvas);
 }
 
+void wtk_canvas_set_draw_d2d(WtkWidget *canvas, WtkD2DDrawFn callback,
+                             void *userdata)
+{
+    if (!canvas || canvas->type != WTK_TYPE_CANVAS)
+        return;
+    canvas->d2d_draw_callback = callback;
+    canvas->d2d_draw_data = userdata;
+    wtk__invalidate(canvas);
+}
+
 void wtk_canvas_redraw(WtkWidget *canvas)
 {
     if (canvas && canvas->type == WTK_TYPE_CANVAS)

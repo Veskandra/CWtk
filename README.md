@@ -18,13 +18,14 @@
   - `pack`：支持 side、fill、expand、外部 padding。
   - `grid`：支持 row/column span、sticky、列/行权重与最小尺寸。
   - `place`：绝对坐标 + 固定尺寸，供可视化设计器和像素级表单使用。
-- **核心只保留原始 GDI 自绘**：WinTk 库默认使用原来的圆角、主题色 GDI 控件；输入框、文本区和列表框仍是原生 `EDIT` / `LISTBOX`。
+- **核心默认保留原始 GDI 自绘**：WinTk 库默认使用原来的圆角、主题色 GDI 控件；可按需启用 Direct2D 形状渲染。输入框、文本区和列表框仍是原生 `EDIT` / `LISTBOX`。
 - **风格绘制可注入**：核心提供 `WtkStylePainter` 绘制钩子；Native/Fusion 是 `styles/` 下的外部 DLL，Designer.exe 只保留加载器，普通 WinTk 程序不会携带这些绘制代码。
 - **Designer 风格插件**：启动时扫描 `styles/*.dll`，动态列出 Windows 原生、Fusion 和 WinTk；支持导入第三方风格 DLL；导出代码可附带内置风格的伴生模块。
 - **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
 - **QMenu 风格菜单**：菜单栏、子菜单、动作句柄、复选/单选、动态启用、快捷键提示和程序触发。
 - **大列表与树**：虚拟列表（百万条 O(1) 建立，只画可见行）、`add_many`/bulk redraw、原生 `SysTreeView32` 树控件。
 - **大文本与闪烁修复**：`text_append`、原生 EDIT 文本上限提升、批量布局提交，避免拖动和 hover 闪屏。详见 [性能与闪烁优化](docs/PERFORMANCE.md)。
+- **可选 Direct2D 渲染**：`wtk_app_set_renderer(app, WTK_RENDERER_D2D)` 让自绘控件使用 D2D 抗锯齿形状，Canvas 可用原生 `ID2D1RenderTarget`；原生 EDIT/LISTBOX 和 GDI 风格画笔保持原路径。
 - **统一事件模型**：CLICK、CHANGE、SUBMIT、FOCUS、鼠标、滚轮、键盘、RESIZE、CLOSE。
 - **键盘可用**：Tab / Shift+Tab 焦点循环、按钮 Enter/Space 激活、方向键操作滑块和单选组、Ctrl+Enter 提交多行文本。
 - **原生输入控件**：编辑框、多行文本和列表框基于 Win32 原生控件，同时拥有 GDI 宿主边框、焦点状态、占位符和统一配色。
@@ -57,6 +58,7 @@ build\form.exe
 build\dashboard.exe
 build\canvas.exe
 build\menu.exe
+build\d2d.exe
 build\wintk_gallery.exe
 designer\build\wintk_designer.exe
 designer\build\styles\wintk_builtin_styles.dll
@@ -133,7 +135,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
 gcc -std=c11 -DUNICODE -D_UNICODE -Iinclude ^
     -finput-charset=UTF-8 -fexec-charset=UTF-8 ^
     app.c build\libwintk.a build\wintk-res.o ^
-    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
+    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 ```
 
 如果源码中包含中文字符串，请保留 UTF-8 编译参数；MSVC 使用 `/utf-8`。
@@ -171,7 +173,7 @@ wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
     page.c designer\styles\designer_style.c build\libwintk.a ^
-    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
+    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 ```
 
 WinTk 原始 GDI 风格不依赖 `designer_style.c`；只有 Native/Fusion 需要。
@@ -457,14 +459,14 @@ WinTk 不是 Tk 的绑定，也没有实现完整的 Tk 几何算法、anchor、
 - `place` 不会随父容器重排；缩放窗口时固定坐标表单不会自适应。
 - 没有自动滚动条，也没有控件虚拟化；内容超出窗口时会被裁剪。
 - WinTk Designer 是轻量版：没有独立工程文件、单选组和嵌套容器；生成代码后需要继续手写事件。
-- 核心只包含 WinTk 原始 GDI 自绘。Native/Fusion 是 Designer 提供的画笔模块，不在 `libwintk.a` 内；不注册 painter 时 `WTK_STYLE_*` 只是提示。
+- 核心默认是 WinTk 原始 GDI 自绘，可选 D2D 形状后端。Native/Fusion 是 Designer 提供的画笔模块，不在 `libwintk.a` 内；不注册 painter 时 `WTK_STYLE_*` 只是提示。
 - Native/Fusion 通过宿主 GDI 绘制，不是把每个按钮替换成独立的原生 BUTTON 子窗口；原生 EDIT 和 LISTBOX 仍是真实系统控件。
 - 菜单、系统消息框和文件对话框始终使用 Windows 原生实现，不随 painter 重绘。
 - 系统 DPI 感知，不支持跨显示器动态重建字体和布局。
 - 默认 UI 字体会随 Windows 界面语言变化；如果需要跨语言完全一致的字形，请显式设置字体。
 - 中文输入依赖原生 EDIT；自绘控件本身不是文本输入控件。
 - 菜单加速键提示是展示性的，不自动注册快捷键。
-- 自定义控件依赖 GDI，不支持半透明、动画或 Direct2D。
+- 自定义控件默认使用 GDI；可选 `WTK_RENDERER_D2D` 提供 D2D 抗锯齿形状，但文本仍由 GDI 绘制，原生 EDIT/LISTBOX 仍是 Windows 控件。
 - 单 UI 线程；控件和事件都不做加锁。
 - 以 MinGW-w64 + Windows 10/11 为主要构建/测试环境；CMake 工程已提供，但 MSVC 未被 CI 覆盖。
 

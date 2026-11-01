@@ -2,7 +2,7 @@
 
 对应版本：1.0.0。公开头文件：`include/wintk.h`。
 
-所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。WinTk 核心只实现原始 GDI 自绘；Native/Fusion 外观由 Designer 的 `WtkStylePainter` 模块提供。
+所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。WinTk 核心默认使用原始 GDI 自绘，并可选启用 Direct2D 形状渲染；Native/Fusion 外观由 Designer 的 `WtkStylePainter` 模块提供。
 
 ---
 
@@ -88,6 +88,7 @@ typedef void (*WtkMenuActionFn)(WtkWidget *window, WtkMenuAction *action,
 | `WtkAlign` | `WTK_ALIGN_LEFT/CENTER/RIGHT` |
 | `WtkButtonStyle` | `WTK_BUTTON_PRIMARY/SECONDARY/GHOST/DANGER` |
 | `WtkStyle` | `WTK_STYLE_AUTO/FUSION/NATIVE/WINTK`（兼容性提示） |
+| `WtkRenderer` | `WTK_RENDERER_GDI`, `WTK_RENDERER_D2D` |
 | `WtkCursor` | `WTK_CURSOR_ARROW/HAND/IBEAM/CROSS/SIZE_H/SIZE_V/SIZE_ALL/SIZE_NWSE/SIZE_NESW/NO` |
 | `WtkIcon` | `WTK_ICON_NONE/INFO/WARNING/ERROR/QUESTION` |
 | `WtkMouseButton` | `WTK_MOUSE_LEFT=1`, `WTK_MOUSE_RIGHT=2`, `WTK_MOUSE_MIDDLE=3` |
@@ -210,7 +211,7 @@ wtk_app_set_style(app, WTK_STYLE_NATIVE);
 wtk_app_set_style(app, WTK_STYLE_FUSION);
 ```
 
-- 核心只绘制原始 WinTk GDI 外观；`WTK_STYLE_*` 和 `wtk_app_set_style()` 仅保留为兼容性提示，不会改变核心绘制。
+- 核心默认绘制原始 WinTk GDI 外观；`wtk_app_set_renderer(app, WTK_RENDERER_D2D)` 可把自绘形状切到 Direct2D，文本和原生控件仍在 GDI/系统控件路径。`WTK_STYLE_*` 和 `wtk_app_set_style()` 仅保留为兼容性提示，不会改变核心绘制。
 - 要让 Native/Fusion 生效，需要注册 `WtkStylePainter`。Designer 不再把画笔编进 exe，而是从 exe 同目录的 `styles/*.dll` 动态加载插件。
 - `wtk_app_set_style_painter(app, painter, userdata)` 安装画笔；传 `NULL` 恢复核心 GDI。
 - painter 的 `paint(widget, hdc, bounds, state)` 覆盖控件/窗口绘制；`field_metrics` 控制原生 EDIT/LISTBOX 的宿主内边距。
@@ -220,6 +221,26 @@ wtk_app_set_style(app, WTK_STYLE_FUSION);
 - `wtk_theme_default()`、`wtk_theme_fusion()`、`wtk_theme_native()` 是可选 GDI 调色板；Designer 会按风格设置。
 - `WINTK_STYLE` 环境变量仍可作为兼容性提示（`auto/native/fusion/wintk`）。
 - `wtk_style_name()` 返回 `"Auto"`、`"Fusion"`、`"Native"` 或 `"WinTk"`。
+
+### 渲染后端：GDI / Direct2D
+
+```c
+typedef enum WtkRenderer {
+    WTK_RENDERER_GDI = 0,
+    WTK_RENDERER_D2D
+} WtkRenderer;
+
+int wtk_app_set_renderer(WtkApp *app, WtkRenderer renderer);
+WtkRenderer wtk_app_get_renderer(WtkApp *app);
+```
+
+- 默认 `WTK_RENDERER_GDI`。
+- `WTK_RENDERER_D2D` 让核心自绘控件用 `ID2D1DCRenderTarget` 绘制抗锯齿的圆角、描边、椭圆和滑块等形状。
+- 文本仍由 GDI/ClearType 绘制；原生 EDIT/LISTBOX 仍是系统控件。
+- 如果已安装 `WtkStylePainter`，核心会把控件交给 painter（GDI 路径），D2D 后端不覆盖该风格模块。
+- `wtk_app_set_renderer` 返回 `1` 表示目标后端已激活；Direct2D 初始化失败会回退 GDI 并返回 `0`。
+- 需要链接 `d2d1` 和 `ole32`；程序应在 UI 线程调用。
+- D2D 是可选路径：不调用这个 API 的程序仍只依赖 GDI。
 
 ### 自定义风格画笔：WtkStylePainter
 
@@ -831,6 +852,8 @@ WtkWidget *wtk_separator(WtkWidget *parent);
 
 WtkWidget *wtk_canvas(WtkWidget *parent, int width, int height);
 void wtk_canvas_set_draw(WtkWidget *canvas, WtkDrawFn callback, void *userdata);
+void wtk_canvas_set_draw_d2d(WtkWidget *canvas, WtkD2DDrawFn callback,
+                             void *userdata);
 void wtk_canvas_redraw(WtkWidget *canvas);
 ```
 
@@ -840,6 +863,9 @@ Canvas 说明：
 - WinTk 会先填充画布背景，再调用绘制回调。
 - 支持鼠标、滚轮、键盘、焦点和双击事件。
 - 需要键盘事件时先点击画布使其获得焦点。
+- `wtk_canvas_set_draw_d2d()` 提供原生 `ID2D1RenderTarget`（目标已绑定到画布 DC，尺寸为设备像素）。D2D 回调优先于 HDC 回调；目标只在回调期间有效，不要保存指针。
+- D2D Canvas 可以独立于 `WTK_RENDERER_D2D` 使用；框架会按需初始化 D2D。文字可自行使用 DirectWrite，或继续用 HDC 回调配合 GDI。
+- 头文件只前置声明 `struct ID2D1RenderTarget`；使用 D2D 回调的源文件需要自己 `#include <d2d1.h>`。
 - 绘制中创建 GDI 对象后请自行 `DeleteObject`；保存/恢复 DC 状态也由用户负责。
 
 ---
@@ -923,7 +949,7 @@ wtk_widget_set_padding(card, 20, 20, 20, 20);
 
 WinTk 需要：
 
-- 链接库：`user32`, `gdi32`, `comctl32`, `shell32`；使用 Designer 的 Native/Fusion 风格时还需 `uxtheme`
+- 链接库：`user32`, `gdi32`, `comctl32`, `shell32`, `d2d1`, `ole32`；使用 Designer 的 Native/Fusion 风格时还需 `uxtheme`
 - 编译定义：`UNICODE`, `_UNICODE`
 - Windows GUI 子系统：MinGW 的 `-mwindows`
 - 公共控件 v6 manifest（`resources/wintk.rc` 已包含）
@@ -944,7 +970,7 @@ build/libwintk.a
 designer/styles/designer_style.c
 ```
 
-并添加 `-Idesigner/styles -Isrc`，链接 `shell32`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
+并添加 `-Idesigner/styles -Isrc`，链接 `shell32 d2d1 ole32`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
 
 Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/wintk_builtin_styles.dll`。移动 Designer 时需要把 `styles` 文件夹一起复制；删除插件目录后 Designer 仍可运行，但只提供 WinTk 核心风格。
 
@@ -998,7 +1024,7 @@ Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/win
 - 不支持滚动容器和内容虚拟化。
 - `pack` 的混合方向布局与 Tk 的完整算法不完全相同。
 - `place` 只做固定坐标放置，不支持 anchor、比例尺寸或随父容器重排。
-- 核心只包含原始 WinTk GDI 绘制；Native/Fusion 画笔由 Designer 的伴生模块提供，不在 `libwintk.a` 内。
+- 核心默认是原始 WinTk GDI 绘制；可选 `WtkRenderer` 切换 D2D 形状后端。Native/Fusion 画笔由 Designer 的伴生模块提供，不在 `libwintk.a` 内。
 - 不注册 `WtkStylePainter` 时，`WTK_STYLE_*` 只是兼容性提示，不会改变外观。
 - 菜单、系统消息框和文件对话框始终使用 Windows 原生实现，不随 painter 重绘。
 - painter 模块可访问 `WtkPaintState`；如果直接使用 Designer 的 `designer_style.c`，需要同时提供 `include` 与 `src` 头文件路径。

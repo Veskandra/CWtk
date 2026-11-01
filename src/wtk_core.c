@@ -150,11 +150,13 @@ int wtk__uses_native_control(WtkWidget *widget)
     if (!widget || !widget->app ||
         widget->app->controls != WTK_CONTROLS_NATIVE)
         return 0;
-    return widget->type == WTK_TYPE_BUTTON ||
+    return widget->type == WTK_TYPE_LABEL ||
+           widget->type == WTK_TYPE_BUTTON ||
            widget->type == WTK_TYPE_CHECKBOX ||
            widget->type == WTK_TYPE_RADIO ||
            widget->type == WTK_TYPE_SLIDER ||
-           widget->type == WTK_TYPE_PROGRESS;
+           widget->type == WTK_TYPE_PROGRESS ||
+           widget->type == WTK_TYPE_SEPARATOR;
 }
 
 int wtk__is_container(WtkWidget *widget)

@@ -39,8 +39,10 @@ void wtk__native_refresh_brush(WtkWidget *widget)
     }
     bg = wtk__is_field(widget)
              ? wtk__field_bg(widget)
-             : (widget->parent ? wtk__container_bg(widget->parent)
-                               : widget->app->theme.surface);
+             : (widget->bg_set
+                    ? widget->bg
+                    : (widget->parent ? wtk__container_bg(widget->parent)
+                                      : widget->app->theme.surface));
     widget->input_brush = CreateSolidBrush(wtk__colorref(bg));
 }
 
@@ -57,16 +59,22 @@ HBRUSH wtk__native_ctlcolor(WtkWidget *widget, HDC dc, UINT message)
         bg = wtk__field_bg(widget);
         fg = wtk__field_fg(widget);
     } else {
-        bg = widget->parent ? wtk__container_bg(widget->parent)
-                            : widget->app->theme.surface;
-        fg = widget->app->theme.text;
+        bg = widget->bg_set
+                 ? widget->bg
+                 : (widget->parent ? wtk__container_bg(widget->parent)
+                                   : widget->app->theme.surface);
+        fg = widget->fg_set ? widget->fg : widget->app->theme.text;
     }
     if (!widget->input_brush)
         wtk__native_refresh_brush(widget);
 
     SetBkColor(dc, wtk__colorref(bg));
     SetTextColor(dc, wtk__colorref(fg));
-    SetBkMode(dc, OPAQUE);
+    SetBkMode(dc, widget->type == WTK_TYPE_LABEL ||
+                          widget->type == WTK_TYPE_FRAME ||
+                          widget->type == WTK_TYPE_RADIOGROUP
+                      ? TRANSPARENT
+                      : OPAQUE);
     return widget->input_brush;
 }
 
@@ -80,6 +88,30 @@ void wtk__native_theme_changed(WtkWidget *widget)
     if (widget->input)
         InvalidateRect(widget->input, NULL, TRUE);
     wtk__invalidate(widget);
+}
+
+void wtk__native_label_style(WtkWidget *widget)
+{
+    LONG_PTR style;
+    if (!widget || widget->type != WTK_TYPE_LABEL ||
+        !wtk__uses_native_control(widget) || !widget->input)
+        return;
+    style = GetWindowLongPtrW(widget->input, GWL_STYLE);
+    style &= ~(SS_TYPEMASK | SS_NOPREFIX | SS_ENDELLIPSIS);
+    if (widget->align == WTK_ALIGN_CENTER)
+        style |= SS_CENTER;
+    else if (widget->align == WTK_ALIGN_RIGHT)
+        style |= SS_RIGHT;
+    else
+        style |= SS_LEFT;
+    style |= SS_NOPREFIX;
+    if (widget->wrap_width <= 0)
+        style |= SS_ENDELLIPSIS;
+    SetWindowLongPtrW(widget->input, GWL_STYLE, style);
+    SetWindowPos(widget->input, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    InvalidateRect(widget->input, NULL, TRUE);
 }
 
 void wtk__native_font_changed(WtkWidget *widget)
@@ -239,6 +271,27 @@ void wtk__create_native_input(WtkWidget *widget)
 
     if (wtk__uses_native_control(widget)) {
         switch (widget->type) {
+        case WTK_TYPE_LABEL: {
+            DWORD align = SS_LEFT;
+            if (widget->align == WTK_ALIGN_CENTER)
+                align = SS_CENTER;
+            else if (widget->align == WTK_ALIGN_RIGHT)
+                align = SS_RIGHT;
+            class_name = L"STATIC";
+            style |= align | SS_NOPREFIX;
+            if (widget->wrap_width <= 0)
+                style |= SS_ENDELLIPSIS;
+            break;
+        }
+        case WTK_TYPE_FRAME:
+        case WTK_TYPE_RADIOGROUP:
+            class_name = L"BUTTON";
+            style |= BS_GROUPBOX;
+            break;
+        case WTK_TYPE_SEPARATOR:
+            class_name = L"STATIC";
+            style |= SS_ETCHEDHORZ;
+            break;
         case WTK_TYPE_BUTTON:
             class_name = L"BUTTON";
             style |= (widget->button_style == WTK_BUTTON_PRIMARY
@@ -267,24 +320,24 @@ void wtk__create_native_input(WtkWidget *widget)
         }
     } else if (widget->type == WTK_TYPE_ENTRY) {
         class_name = L"EDIT";
-        style |= ES_LEFT | ES_AUTOHSCROLL | ES_NOHIDESEL;
+        style |= ES_LEFT | ES_AUTOHSCROLL | ES_NOHIDESEL | WS_BORDER;
     } else if (widget->type == WTK_TYPE_TEXT) {
         class_name = L"EDIT";
         style |= ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN |
-                 ES_NOHIDESEL | WS_VSCROLL;
+                 ES_NOHIDESEL | WS_VSCROLL | WS_BORDER;
     } else if (widget->type == WTK_TYPE_TREE) {
         class_name = WC_TREEVIEWW;
         style |= TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS |
-                 TVS_SHOWSELALWAYS | TVS_DISABLEDRAGDROP;
+                 TVS_SHOWSELALWAYS | TVS_DISABLEDRAGDROP | WS_BORDER;
     } else if (widget->virtual_count > 0) {
         /* 虚拟列表：条目本身不存字符串，只存数量，绘制靠 WM_DRAWITEM */
         class_name = L"LISTBOX";
         style |= LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED |
-                 LBS_NODATA | WS_VSCROLL;
+                 LBS_NODATA | WS_VSCROLL | WS_BORDER;
     } else {
         class_name = L"LISTBOX";
         style |= LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_HASSTRINGS |
-                 WS_VSCROLL;
+                 WS_VSCROLL | WS_BORDER;
     }
 
     input = CreateWindowExW(
@@ -297,11 +350,15 @@ void wtk__create_native_input(WtkWidget *widget)
     SendMessageW(input, WM_SETFONT, (WPARAM)widget->font, TRUE);
 
     if (wtk__uses_native_control(widget)) {
-        if (widget->type == WTK_TYPE_BUTTON ||
+        if (widget->type == WTK_TYPE_LABEL ||
+            widget->type == WTK_TYPE_BUTTON ||
             widget->type == WTK_TYPE_CHECKBOX ||
-            widget->type == WTK_TYPE_RADIO) {
+            widget->type == WTK_TYPE_RADIO ||
+            widget->type == WTK_TYPE_FRAME ||
+            widget->type == WTK_TYPE_RADIOGROUP) {
             SetWindowTextW(input, widget->text ? widget->text : L"");
-            if (widget->type != WTK_TYPE_BUTTON)
+            if (widget->type == WTK_TYPE_CHECKBOX ||
+                widget->type == WTK_TYPE_RADIO)
                 SendMessageW(input, BM_SETCHECK,
                              widget->checked ? BST_CHECKED : BST_UNCHECKED,
                              0);

@@ -2881,6 +2881,7 @@ static int designer_add_style_plugin(Designer *designer, const WCHAR *path,
     const WtkStylePlugin *plugin;
     int first = -1;
     int i;
+    int j;
 
     if (!designer || !path)
         return -1;
@@ -2923,8 +2924,23 @@ static int designer_add_style_plugin(Designer *designer, const WCHAR *path,
             break;
         if (!src->id || !src->name)
             continue;
-        if (designer_style_id_exists(designer, src->id))
+        if (designer_style_id_exists(designer, src->id)) {
+            /* The built-in "WinTk" entry starts without a painter. The plugin
+             * supplied classic painter fills that slot instead of adding a
+             * duplicate menu item. */
+            for (j = 0; j < designer->style_count; ++j) {
+                LoadedStyle *existing = &designer->styles[j];
+                if (strcmp(existing->id, src->id) != 0)
+                    continue;
+                if (!existing->painter && src->painter) {
+                    existing->painter = src->painter;
+                    if (src->theme)
+                        existing->theme = src->theme;
+                }
+                break;
+            }
             continue;
+        }
         dst = &designer->styles[designer->style_count++];
         memset(dst, 0, sizeof(*dst));
         snprintf(dst->id, sizeof(dst->id), "%s", src->id);

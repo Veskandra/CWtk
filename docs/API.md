@@ -255,12 +255,13 @@ int wtk_app_set_controls(WtkApp *app, WtkControls controls);
 WtkControls wtk_app_get_controls(WtkApp *app);
 ```
 
-- 默认 `WTK_CONTROLS_NATIVE`：`Button`、`Checkbox`、`Radio`、`Slider`、`Progress` 使用标准 Win32/common controls。
-- `WTK_CONTROLS_CUSTOM`：这些控件恢复 WinTk 自绘外观（GDI；若启用 D2D 则形状走 D2D）。
+- 默认 `WTK_CONTROLS_NATIVE`：`Label`、`Button`、`Checkbox`、`Radio`、`Slider`、`Progress`、`Separator` 使用标准 Win32/common controls。
 - `Entry`、`Text`、`Listbox`、`Tree` 始终是原生控件，不受这个开关影响。
+- `Frame` / `RadioGroup` 是布局容器，不是可交互控件：原生模式下只填背景/边框，子控件仍是原生；Canvas 是自绘表面。
+- `WTK_CONTROLS_CUSTOM`：移除这些控件的原生 child，交给风格 painter 绘制。必须同时安装 painter（例如 `wintk_classic_painter`），否则只剩宿主背景；旧版 WinTk GDI 绘制已移到 `designer/styles/wintk_classic_draw.c`。
 - 原生模式下按钮样式、圆角、自定义配色和 `show_percent` 等自绘细节不会生效；这是系统控件的限制。
 - 可以在创建控件前设置，也可以在运行时切换；运行时切换会销毁并重建这些简单控件的原生 child。
-- 环境变量 `WINTK_CONTROLS=custom`（或 `wintk`）可用于启动时选择自绘控件。
+- 环境变量 `WINTK_CONTROLS=custom`（或 `wintk`）只切换控件后端；自绘还需要通过风格插件/伴生模块安装 painter。
 - **Designer 本身使用自绘后端**，以保证 Native/Fusion/WinTk 风格预览一致；`designer_style_apply()` 也会切换到自绘后端。
 - 原生控件和 D2D：原生按钮/复选框等由系统绘制；D2D 只作用于自绘控件和 D2D Canvas。
 
@@ -293,8 +294,8 @@ WtkWidgetKind wtk_widget_kind(WtkWidget *widget);
   - 控件类型、文本、字体、背景/前景/边框和尺寸
   - hover/pressed/focused/checked/selected/enabled
   - 按钮样式、焦点环、进度、滑块值和只读/密码状态
-- 注册 painter 会立即刷新现有窗口；传 `NULL` 恢复核心自绘外观。
-- `designer/styles/designer_style.c` 是内置 Native/Fusion 画笔的源码；它编译成 `wintk_builtin_styles.dll`，不进入 Designer.exe。
+- 注册 painter 会立即刷新现有窗口；传 `NULL` 清除 painter，自绘控件只保留宿主背景。
+- `designer/styles/designer_style.c` 是内置 Native/Fusion 画笔的源码，`designer/styles/wintk_classic_draw.c` 是原 WinTk 自绘风格；两者编译成 `wintk_builtin_styles.dll`，不进入 Designer.exe。
 
 ### 风格插件 DLL
 
@@ -323,7 +324,7 @@ __declspec(dllexport) const WtkStylePlugin *wintk_style_plugin_get(void);
 - `theme` 和 `painter` 必须保持有效直到 DLL 被卸载；Designer 在进程生命周期内保持 DLL 加载。
 - Designer 启动时扫描 `styles/*.dll`，风格菜单动态列出插件；菜单末尾的“导入风格 DLL...”可加载任意位置的新插件。
 - 外部插件可完全基于公开的 `WtkPaintState` 实现 painter，不依赖 WinTk 内部头文件。
-- 内置 DLL 返回 `native` 和 `fusion` 两个风格；WinTk 是核心 GDI，不来自插件。
+- 内置 DLL 返回 `native`、`fusion` 和 `wintk`（经典自绘）三个风格；经典自绘的 painter 在 `wintk_classic_draw.c`。
 
 ### 尺寸与字体辅助
 
@@ -990,6 +991,7 @@ build/libwintk.a
 
 ```text
 designer/styles/designer_style.c
+designer/styles/wintk_classic_draw.c
 ```
 
 并添加 `-Idesigner/styles -Isrc`，链接 `shell32 d2d1 ole32`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。

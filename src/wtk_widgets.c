@@ -1302,6 +1302,7 @@ void wtk_label_set_align(WtkWidget *label, WtkAlign align)
     if (!label || label->type != WTK_TYPE_LABEL)
         return;
     label->align = align;
+    wtk__native_label_style(label);
     wtk__invalidate(label);
 }
 
@@ -1311,6 +1312,7 @@ void wtk_label_set_wrap_width(WtkWidget *label, int logical_width)
         return;
     label->wrap_width =
         logical_width > 0 ? wtk__logical(label->app, logical_width) : 0;
+    wtk__native_label_style(label);
     wtk__request_relayout(label);
     wtk__invalidate(label);
 }
@@ -1542,11 +1544,13 @@ void wtk__apply_controls_tree(WtkWidget *widget)
     int simple;
     if (!widget)
         return;
-    simple = widget->type == WTK_TYPE_BUTTON ||
+    simple = widget->type == WTK_TYPE_LABEL ||
+             widget->type == WTK_TYPE_BUTTON ||
              widget->type == WTK_TYPE_CHECKBOX ||
              widget->type == WTK_TYPE_RADIO ||
              widget->type == WTK_TYPE_SLIDER ||
-             widget->type == WTK_TYPE_PROGRESS;
+             widget->type == WTK_TYPE_PROGRESS ||
+             widget->type == WTK_TYPE_SEPARATOR;
     if (simple) {
         if (widget->input) {
             DestroyWindow(widget->input);

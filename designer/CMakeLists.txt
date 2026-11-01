@@ -63,6 +63,7 @@ target_include_directories(wintk_designer PRIVATE
 
 add_library(wintk_builtin_styles SHARED
     styles/designer_style.c
+    styles/wintk_classic_draw.c
 )
 target_include_directories(wintk_builtin_styles PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/styles"

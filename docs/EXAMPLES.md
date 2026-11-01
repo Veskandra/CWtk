@@ -15,12 +15,12 @@
 示例默认使用原生 Win32 控件。需要旧版 WinTk 自绘外观时，在 `wtk_app_new()` 后调用：
 
 ```c
+extern const WtkStylePainter wintk_classic_painter;
 wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
+wtk_app_set_style_painter(app, &wintk_classic_painter, NULL);
 ```
 
-或启动时设置 `WINTK_CONTROLS=custom`。
-
-![自绘控件风格](example-form-custom.png)
+`wintk_classic_painter` 来自 `designer/styles/wintk_classic_draw.c`；只设置 `WINTK_CONTROLS=custom` 而不加载 painter 会得到空白的自绘宿主。
 
 构建全部示例：
 
@@ -435,6 +435,7 @@ wtk_app_add_shortcut(app, 'S', WTK_MOD_CONTROL, on_ctrl_s, &state);
 ```c
 WtkApp *app = wtk_app_new();
 wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM); /* D2D 只接管自绘控件 */
+wtk_app_set_style_painter(app, &wintk_classic_painter, NULL);
 if (!wtk_app_set_renderer(app, WTK_RENDERER_D2D))
     fprintf(stderr, "D2D unavailable, falling back to GDI\n");
 ```
@@ -487,8 +488,9 @@ static void build_page(WtkWidget *window)
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
-    page.c designer\styles\designer_style.c build\libwintk.a ^
-    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
+    page.c designer\styles\designer_style.c ^
+    designer\styles\wintk_classic_draw.c build\libwintk.a ^
+    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 ```
 
 生成的代码会调用：
@@ -497,7 +499,7 @@ gcc -std=c11 -DUNICODE -D_UNICODE ^
 designer_style_apply(app, DESIGNER_STYLE_NATIVE);
 ```
 
-纯 WinTk 风格页面不需要 `designer_style.c`。
+纯原生控件页面不需要风格伴生源码；选择 WinTk 自绘/Native/Fusion 时都要编译对应的风格模块。
 
 ---
 

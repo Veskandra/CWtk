@@ -97,8 +97,8 @@ $(CANVAS): examples/canvas.c $(LIB) $(RES) | $(BUILD)
 $(MENU): examples/menu.c $(LIB) $(RES) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(D2D): examples/d2d.c $(LIB) $(RES) | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+$(D2D): examples/d2d.c designer/styles/wintk_classic_draw.c $(LIB) $(RES) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< designer/styles/wintk_classic_draw.c $(LIB) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
 
 run: $(GALLERY)
 	@start "" "$(GALLERY)"

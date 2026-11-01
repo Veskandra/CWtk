@@ -33,7 +33,7 @@ LIB_SRCS := \
 
 LIB_OBJS := $(patsubst $(ROOT)/src/%.c,$(OBJDIR)/lib_%.o,$(LIB_SRCS))
 APP_OBJS := $(OBJDIR)/designer.o $(OBJDIR)/designer_model.o
-STYLE_OBJ := $(OBJDIR)/designer_style.o
+STYLE_OBJ := $(OBJDIR)/designer_style.o $(OBJDIR)/wintk_classic_draw.o
 
 .PHONY: all clean run
 
@@ -54,6 +54,11 @@ $(OBJDIR)/designer_model.o: src/designer_model.c src/designer_model.h | $(OBJDIR
 
 $(OBJDIR)/designer_style.o: styles/designer_style.c styles/designer_style.h \
 		styles/style_plugin.h $(ROOT)/src/wtk_internal.h \
+		$(ROOT)/include/wintk.h | $(OBJDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/wintk_classic_draw.o: styles/wintk_classic_draw.c \
+		styles/designer_style.h $(ROOT)/src/wtk_internal.h \
 		$(ROOT)/include/wintk.h | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 

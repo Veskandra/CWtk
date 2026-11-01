@@ -3,6 +3,8 @@
 #include <d2d1.h>
 #include <stdio.h>
 
+extern const WtkStylePainter wintk_classic_painter;
+
 typedef struct D2DState {
     WtkWidget *window;
     int frames;
@@ -108,6 +110,7 @@ static int run_d2d(void)
     if (!app)
         return 1;
     wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
+    wtk_app_set_style_painter(app, &wintk_classic_painter, NULL);
     if (!wtk_app_set_renderer(app, WTK_RENDERER_D2D)) {
         wtk_message_box(NULL, "Direct2D 不可用",
                         "无法创建 Direct2D 渲染目标，程序将使用 GDI。",

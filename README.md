@@ -18,7 +18,7 @@
   - `pack`：支持 side、fill、expand、外部 padding。
   - `grid`：支持 row/column span、sticky、列/行权重与最小尺寸。
   - `place`：绝对坐标 + 固定尺寸，供可视化设计器和像素级表单使用。
-- **原生控件优先**：Button/Checkbox/Radio/Slider/Progress 默认使用标准 Win32 common controls；`WTK_CONTROLS_CUSTOM` 可恢复原来的 GDI 自绘外观（也可叠加 D2D）。Entry/Text/Listbox/Tree 始终是原生控件。
+- **原生控件优先**：Label/Button/Checkbox/Radio/Slider/Progress/Separator 默认使用标准 Win32 common controls；`WTK_CONTROLS_CUSTOM` 交给风格 painter 绘制。Entry/Text/Listbox/Tree 始终是原生控件；Frame/RadioGroup 是布局容器，Canvas 是自绘表面。
 - **风格绘制可注入**：核心提供 `WtkStylePainter` 绘制钩子；Native/Fusion 是 `styles/` 下的外部 DLL，Designer.exe 只保留加载器，普通 WinTk 程序不会携带这些绘制代码。
 - **Designer 风格插件**：启动时扫描 `styles/*.dll`，动态列出 Windows 原生、Fusion 和 WinTk；支持导入第三方风格 DLL；导出代码可附带内置风格的伴生模块。
 - **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
@@ -168,16 +168,17 @@ wtk_button_set_style(button1, WTK_BUTTON_PRIMARY);
 wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 ```
 
-生成文件包含 `build_page()`、完整的 `WinMain()`，以及 `designer_style_apply()` 调用。选中风格由 Designer 的风格模块绘制；编译时要把 `designer/styles/designer_style.c` 作为伴生模块一起编译，并链接 `user32`、`gdi32`、`comctl32`、`uxtheme`：
+生成文件包含 `build_page()`、完整的 `WinMain()`，以及 `designer_style_apply()` 调用。选中风格由 Designer 的风格模块绘制；编译时要把 `designer/styles/designer_style.c` 和 `designer/styles/wintk_classic_draw.c` 作为伴生模块一起编译，并链接 `user32`、`gdi32`、`comctl32`、`uxtheme`、`shell32`、`d2d1`、`ole32`：
 
 ```bat
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
-    page.c designer\styles\designer_style.c build\libwintk.a ^
+    page.c designer\styles\designer_style.c ^
+    designer\styles\wintk_classic_draw.c build\libwintk.a ^
     -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32 -ld2d1 -lole32
 ```
 
-WinTk 自绘风格不依赖 `designer_style.c`；只有 Native/Fusion 需要。使用 `WINTK_CONTROLS=custom` 可以在原生控件与当前自绘风格之间切换。
+WinTk 自绘风格现在也是 `wintk_classic_draw.c` 提供的 painter；Native/Fusion/自绘都通过伴生模块或 `wintk_builtin_styles.dll` 加载。
 
 设计器子项目可以单独构建：
 
@@ -278,17 +279,18 @@ wtk_place(widget, 40, 36, 320, 44);
 WinTk 默认使用**原生 Win32 控件**（Button/Checkbox/Radio/Slider/Progress）；原来的自绘外观保留为 `WTK_CONTROLS_CUSTOM`。自绘后端上的风格绘制通过公开的 `WtkStylePainter` 注入：
 
 ```c
+extern const WtkStylePainter wintk_classic_painter;
 WtkApp *app = wtk_app_new();                    /* 原生控件（默认） */
-wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM); /* 切到当前自绘风格 */
-wtk_app_set_style_painter(app, NULL, NULL);    /* 恢复核心自绘 */
+wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM); /* 切到自绘控件 */
+wtk_app_set_style_painter(app, &wintk_classic_painter, NULL); /* 旧 WinTk 风格 */
 ```
 
-- 核心不包含 Native/Fusion 的控件绘制代码。
+- 核心不包含 Native/Fusion/Classic 的控件绘制代码；旧 WinTk 绘制现在是插件里的 `wintk_classic_painter`。
 - 内置风格作为 DLL 插件放在 `styles/`：`designer/build/styles/wintk_builtin_styles.dll`。Designer.exe 只保留插件加载器。
 - Designer 的“风格”菜单动态列出 `styles/*.dll` 中的插件；菜单末尾有“导入风格 DLL...”。
-- 内置 DLL 提供 Windows 原生和 Fusion；WinTk 风格是核心 GDI，不需要插件。
-- 原生控件模式下，painter 不会接管 Button/Checkbox/Radio/Slider/Progress；这些是系统控件。要使用 Native/Fusion 画笔，请先切到 `WTK_CONTROLS_CUSTOM`。
-- `WTK_STYLE_*` 和 `wtk_app_set_style()` 保留为兼容性“风格提示”，本身不会改变核心绘制；必须注册 painter 才有 Native/Fusion 效果。
+- 内置 DLL 提供 Windows 原生、Fusion 和 WinTk 自绘三个风格；它们都通过 painter 绘制自绘控件。
+- 原生控件模式下，painter 不会接管 Label/Button/Checkbox/Radio/Slider/Progress/Separator；这些是系统控件。要使用画笔，请先切到 `WTK_CONTROLS_CUSTOM`。
+- `WTK_STYLE_*` 和 `wtk_app_set_style()` 保留为兼容性“风格提示”，本身不会改变核心绘制；必须注册 painter 才有 Native/Fusion/Classic 效果。
 - `WtkStylePainter` 提供 `paint(widget, hdc, bounds, state)` 和可选的 `field_metrics(...)`；`state` 暴露控件类型、文本、字体、颜色、状态、值和尺寸。
 - `wtk_theme_default()` / `wtk_theme_fusion()` / `wtk_theme_native()` 提供 GDI 调色板；Designer 会切换到对应主题。
 - `WINTK_STYLE` 环境变量仍可作为提示使用，但没有 painter 时不会改变核心绘制。
@@ -296,7 +298,7 @@ wtk_app_set_style_painter(app, NULL, NULL);    /* 恢复核心自绘 */
 
 风格插件 ABI 在 `designer/styles/style_plugin.h`：DLL 导出 `wintk_style_plugin_get()`，返回 `WtkStylePlugin`；每个 `WtkStylePluginStyle` 提供 id、名称、兼容提示、主题和 painter。
 
-Designer 的“风格”菜单会列出所有加载到的插件，Designer 自身和导出风格使用自绘后端。原生控件 Gallery：[Gallery](docs/gallery-dashboard.png)；当前自绘风格：[自绘表单](docs/example-form-custom.png)；Designer 的外观：[Designer](docs/designer.png)。
+Designer 的“风格”菜单会列出所有加载到的插件，Designer 自身和导出风格使用自绘后端。原生控件 Gallery：[Gallery](docs/gallery-dashboard.png)；当前自绘风格：[Direct2D + 自绘](docs/example-d2d.png)；Designer 的外观：[Designer](docs/designer.png)。
 
 ### 中文、Unicode 与输入法
 
@@ -462,8 +464,8 @@ WinTk 不是 Tk 的绑定，也没有实现完整的 Tk 几何算法、anchor、
 - `place` 不会随父容器重排；缩放窗口时固定坐标表单不会自适应。
 - 没有自动滚动条，也没有控件虚拟化；内容超出窗口时会被裁剪。
 - WinTk Designer 是轻量版：没有独立工程文件、单选组和嵌套容器；生成代码后需要继续手写事件。
-- 核心默认使用 Win32 原生控件；`WTK_CONTROLS_CUSTOM` 恢复 WinTk 自绘，可选 D2D 形状后端。Native/Fusion 是 Designer 提供的画笔模块，只作用于自绘后端，不在 `libwintk.a` 内；不注册 painter 时 `WTK_STYLE_*` 只是提示。
-- 原生控件模式下 Button/Checkbox/Radio/Slider/Progress 是真实系统控件；自绘模式下它们由宿主 GDI/D2D 绘制。原生 EDIT、LISTBOX、Tree 始终是系统控件。
+- 核心默认使用 Win32 原生控件；`WTK_CONTROLS_CUSTOM` 把控件交给风格 painter（`wintk_classic_draw.c` 或插件），可选 D2D 形状后端。Native/Fusion/Classic 都是 Designer 提供的画笔模块，只作用于自绘后端，不在 `libwintk.a` 内；不注册 painter 时自绘宿主只有背景。
+- 原生控件模式下 Label/Button/Checkbox/Radio/Slider/Progress/Separator 是真实系统控件；自绘模式下它们由风格 painter 绘制。原生 EDIT、LISTBOX、Tree 始终是系统控件。
 - 菜单、系统消息框和文件对话框始终使用 Windows 原生实现，不随 painter 重绘。
 - 系统 DPI 感知，不支持跨显示器动态重建字体和布局。
 - 默认 UI 字体会随 Windows 界面语言变化；如果需要跨语言完全一致的字形，请显式设置字体。

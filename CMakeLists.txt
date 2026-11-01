@@ -89,10 +89,14 @@ target_include_directories(menu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
 add_executable(d2d WIN32
     examples/d2d.c
+    designer/styles/wintk_classic_draw.c
     ${WINTK_RESOURCE}
 )
 target_link_libraries(d2d PRIVATE WinTk::wintk)
-target_include_directories(d2d PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+target_include_directories(d2d PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
 
 if(MINGW)
     # Keep the examples self-contained (no libgcc_s DLL next to the .exe).

@@ -364,6 +364,7 @@ void wtk__native_notify(WtkWidget *widget, LPARAM lparam);
 HBRUSH wtk__native_ctlcolor(WtkWidget *widget, HDC dc, UINT message);
 void wtk__native_theme_changed(WtkWidget *widget);
 void wtk__native_font_changed(WtkWidget *widget);
+void wtk__native_label_style(WtkWidget *widget);
 void wtk__native_enabled_changed(WtkWidget *widget);
 void wtk__native_set_text(WtkWidget *widget, const char *text);
 const char *wtk__native_get_text(WtkWidget *widget);

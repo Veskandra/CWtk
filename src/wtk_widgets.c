@@ -169,6 +169,17 @@ void wtk__set_widget_text(WtkWidget *widget, const char *text)
         wtk__native_set_text(widget, text);
         return;
     }
+    if (wtk__uses_native_control(widget)) {
+        wide = wtk__u8_to_u16(text ? text : "");
+        free(widget->text);
+        widget->text = wide;
+        wtk__invalidate_text_cache(widget);
+        if (widget->input)
+            SetWindowTextW(widget->input, wide ? wide : L"");
+        wtk__request_relayout(widget);
+        wtk__invalidate(widget);
+        return;
+    }
 
     /* 内容没变就不重排：状态栏/提示行会被高频刷新，白重排很贵 */
     if (widget->text) {
@@ -509,19 +520,45 @@ static LRESULT CALLBACK widget_proc(HWND hwnd, UINT message, WPARAM wparam,
     if (!widget)
         return DefWindowProcW(hwnd, message, wparam, lparam);
 
-    if (wtk__is_field(widget)) {
+    if (wtk__is_field(widget) || wtk__uses_native_control(widget)) {
         switch (message) {
         case WM_COMMAND:
             wtk__native_command(widget, wparam, lparam);
             return 0;
+        case WM_HSCROLL:
+            if (wtk__uses_native_control(widget) &&
+                widget->type == WTK_TYPE_SLIDER) {
+                int value = (int)SendMessageW(widget->input, TBM_GETPOS, 0, 0);
+                if (value != widget->value) {
+                    widget->value = value;
+                    wtk__emit_change(widget, value);
+                }
+                return 0;
+            }
+            break;
         case WM_NOTIFY:
-            wtk__native_notify(widget, lparam);
+            if (wtk__is_field(widget)) {
+                wtk__native_notify(widget, lparam);
+            } else if (wtk__uses_native_control(widget) &&
+                       widget->type == WTK_TYPE_SLIDER) {
+                NMHDR *hdr = (NMHDR *)lparam;
+                if (hdr && hdr->code == NM_SETFOCUS) {
+                    widget->focused = 1;
+                    wtk__emit(widget, WTK_EVENT_FOCUS_IN);
+                } else if (hdr && hdr->code == NM_KILLFOCUS) {
+                    widget->focused = 0;
+                    wtk__emit(widget, WTK_EVENT_FOCUS_OUT);
+                }
+            }
             return 0;
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORBTN:
-            return (LRESULT)wtk__native_ctlcolor(widget, (HDC)wparam, message);
+            if (wtk__is_field(widget) || wtk__uses_native_control(widget))
+                return (LRESULT)wtk__native_ctlcolor(widget, (HDC)wparam,
+                                                     message);
+            break;
         case WM_MEASUREITEM: {
             MEASUREITEMSTRUCT *mis = (MEASUREITEMSTRUCT *)lparam;
             if (mis && mis->CtlID == WTK_INPUT_ID &&
@@ -836,7 +873,8 @@ WtkWidget *wtk__create_widget(WtkWidget *parent, WtkWidgetType type,
     widget->text = wtext;
 
     style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
-    if (widget->focusable && !wtk__is_field(widget))
+    if (widget->focusable && !wtk__is_field(widget) &&
+        !wtk__uses_native_control(widget))
         style |= WS_TABSTOP;
 
     widget->hwnd = CreateWindowExW(
@@ -847,7 +885,7 @@ WtkWidget *wtk__create_widget(WtkWidget *parent, WtkWidgetType type,
         return NULL;
     }
 
-    if (wtk__is_field(widget))
+    if (wtk__is_field(widget) || wtk__uses_native_control(widget))
         wtk__create_native_input(widget);
 
     wtk__add_child(parent, widget);
@@ -1145,8 +1183,12 @@ WtkWidget *wtk_listbox(WtkWidget *parent)
 WtkWidget *wtk_checkbox(WtkWidget *parent, const char *text, int checked)
 {
     WtkWidget *widget = wtk__create_widget(parent, WTK_TYPE_CHECKBOX, text);
-    if (widget)
+    if (widget) {
         widget->checked = !!checked;
+        if (wtk__uses_native_control(widget) && widget->input)
+            SendMessageW(widget->input, BM_SETCHECK,
+                         widget->checked ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
     return widget;
 }
 
@@ -1178,6 +1220,9 @@ WtkWidget *wtk_radio(WtkWidget *group, const char *text)
     }
     if (group->value < 0)
         group->value = index;
+    if (wtk__uses_native_control(radio) && radio->input)
+        SendMessageW(radio->input, BM_SETCHECK,
+                     group->value == index ? BST_CHECKED : BST_UNCHECKED, 0);
     return radio;
 }
 
@@ -1202,6 +1247,15 @@ WtkWidget *wtk_slider(WtkWidget *parent, int minimum, int maximum, int value)
         value = maximum;
     slider->value = value;
     slider->value_step = 1;
+    if (wtk__uses_native_control(slider) && slider->input) {
+        SendMessageW(slider->input, TBM_SETRANGE, TRUE,
+                     MAKELPARAM(slider->value_min, slider->value_max));
+        SendMessageW(slider->input, TBM_SETPOS, TRUE, slider->value);
+        SendMessageW(slider->input, TBM_SETLINESIZE, 0,
+                     slider->value_step);
+        SendMessageW(slider->input, TBM_SETPAGESIZE, 0,
+                     slider->value_step * 10);
+    }
     return slider;
 }
 
@@ -1279,6 +1333,16 @@ void wtk_button_set_style(WtkWidget *button, WtkButtonStyle style)
     if (!button || button->type != WTK_TYPE_BUTTON)
         return;
     button->button_style = style;
+    if (wtk__uses_native_control(button) && button->input) {
+        LONG_PTR bits = GetWindowLongPtrW(button->input, GWL_STYLE);
+        bits &= ~(BS_TYPEMASK);
+        bits |= style == WTK_BUTTON_PRIMARY ? BS_DEFPUSHBUTTON
+                                            : BS_PUSHBUTTON;
+        SetWindowLongPtrW(button->input, GWL_STYLE, bits);
+        SetWindowPos(button->input, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                         SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
     wtk__invalidate(button);
 }
 
@@ -1302,6 +1366,9 @@ void wtk_checkbox_set(WtkWidget *checkbox, int checked)
     if (!checkbox || checkbox->type != WTK_TYPE_CHECKBOX)
         return;
     checkbox->checked = !!checked;
+    if (wtk__uses_native_control(checkbox) && checkbox->input)
+        SendMessageW(checkbox->input, BM_SETCHECK,
+                     checkbox->checked ? BST_CHECKED : BST_UNCHECKED, 0);
     wtk__invalidate(checkbox);
 }
 
@@ -1334,8 +1401,13 @@ void wtk__radio_select(WtkWidget *group, int index, int focus, int notify)
     changed = group->value != index;
     group->value = index;
     for (i = 0; i < group->child_count; ++i) {
-        if (group->children[i]->type == WTK_TYPE_RADIO)
-            wtk__invalidate(group->children[i]);
+        WtkWidget *child = group->children[i];
+        if (child->type != WTK_TYPE_RADIO)
+            continue;
+        if (wtk__uses_native_control(child) && child->input)
+            SendMessageW(child->input, BM_SETCHECK,
+                         child == target ? BST_CHECKED : BST_UNCHECKED, 0);
+        wtk__invalidate(child);
     }
     wtk__invalidate(group);
 
@@ -1389,6 +1461,8 @@ void wtk_slider_set(WtkWidget *slider, int value)
     if (slider->value == value)
         return;
     slider->value = value;
+    if (wtk__uses_native_control(slider) && slider->input)
+        SendMessageW(slider->input, TBM_SETPOS, TRUE, value);
     wtk__invalidate(slider);
 }
 
@@ -1397,6 +1471,12 @@ void wtk_slider_set_step(WtkWidget *slider, int step)
     if (!slider || slider->type != WTK_TYPE_SLIDER)
         return;
     slider->value_step = step > 0 ? step : 1;
+    if (wtk__uses_native_control(slider) && slider->input) {
+        SendMessageW(slider->input, TBM_SETLINESIZE, 0,
+                     slider->value_step);
+        SendMessageW(slider->input, TBM_SETPAGESIZE, 0,
+                     slider->value_step * 10);
+    }
 }
 
 void wtk_progress_set(WtkWidget *progress, double fraction)
@@ -1408,6 +1488,9 @@ void wtk_progress_set(WtkWidget *progress, double fraction)
     if (fraction > 1.0)
         fraction = 1.0;
     progress->progress = fraction;
+    if (wtk__uses_native_control(progress) && progress->input)
+        SendMessageW(progress->input, PBM_SETPOS,
+                     (WPARAM)(fraction * 1000.0), 0);
     wtk__invalidate(progress);
 }
 
@@ -1451,6 +1534,30 @@ void wtk_canvas_redraw(WtkWidget *canvas)
 {
     if (canvas && canvas->type == WTK_TYPE_CANVAS)
         wtk__invalidate(canvas);
+}
+
+void wtk__apply_controls_tree(WtkWidget *widget)
+{
+    int i;
+    int simple;
+    if (!widget)
+        return;
+    simple = widget->type == WTK_TYPE_BUTTON ||
+             widget->type == WTK_TYPE_CHECKBOX ||
+             widget->type == WTK_TYPE_RADIO ||
+             widget->type == WTK_TYPE_SLIDER ||
+             widget->type == WTK_TYPE_PROGRESS;
+    if (simple) {
+        if (widget->input) {
+            DestroyWindow(widget->input);
+            widget->input = NULL;
+        }
+        if (wtk__uses_native_control(widget))
+            wtk__create_native_input(widget);
+        wtk__invalidate(widget);
+    }
+    for (i = 0; i < widget->child_count; ++i)
+        wtk__apply_controls_tree(widget->children[i]);
 }
 
 /* ========================================================================= */

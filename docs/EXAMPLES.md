@@ -12,6 +12,16 @@
 | Direct2D | [d2d.c](../examples/d2d.c) | D2D 渲染后端、D2D Canvas、抗锯齿形状 |
 | Designer 导出 | 由 Designer 生成 | `wtk_place`、伴生风格模块、构建命令 |
 
+示例默认使用原生 Win32 控件。需要旧版 WinTk 自绘外观时，在 `wtk_app_new()` 后调用：
+
+```c
+wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
+```
+
+或启动时设置 `WINTK_CONTROLS=custom`。
+
+![自绘控件风格](example-form-custom.png)
+
 构建全部示例：
 
 ```bat
@@ -420,13 +430,16 @@ wtk_app_add_shortcut(app, 'S', WTK_MOD_CONTROL, on_ctrl_s, &state);
 
 源码：[examples/d2d.c](../examples/d2d.c)
 
-启用核心控件的 D2D 形状绘制：
+启用自绘控件的 D2D 形状绘制：
 
 ```c
 WtkApp *app = wtk_app_new();
+wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM); /* D2D 只接管自绘控件 */
 if (!wtk_app_set_renderer(app, WTK_RENDERER_D2D))
     fprintf(stderr, "D2D unavailable, falling back to GDI\n");
 ```
+
+默认的 `WTK_CONTROLS_NATIVE` 下，按钮/复选框/滑块/进度条是系统控件，不会被 D2D 接管。
 
 Canvas 使用原生 D2D 目标：
 

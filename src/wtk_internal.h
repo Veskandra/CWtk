@@ -108,6 +108,7 @@ struct WtkApp {
     WtkStyle style_requested;
     WtkStyle style_resolved;
     WtkRenderer renderer;
+    WtkControls controls;
     ID2D1Factory *d2d_factory;
     ID2D1DCRenderTarget *d2d_target;
     int d2d_com_initialized;
@@ -354,6 +355,8 @@ void wtk__remove_child(WtkWidget *parent, WtkWidget *child);
 void wtk__refresh_widget_font(WtkWidget *widget);
 
 /* Native edit/listbox helpers. */
+int wtk__uses_native_control(WtkWidget *widget);
+void wtk__apply_controls_tree(WtkWidget *widget);
 void wtk__create_native_input(WtkWidget *widget);
 void wtk__native_position(WtkWidget *widget);
 void wtk__native_command(WtkWidget *widget, WPARAM wparam, LPARAM lparam);

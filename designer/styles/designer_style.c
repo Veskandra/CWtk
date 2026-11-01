@@ -1521,6 +1521,8 @@ void designer_style_apply(WtkApp *app, DesignerStyle style)
     WtkTheme theme;
     if (!app)
         return;
+    /* Companion style modules paint custom controls, not native ones. */
+    wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
     if (style == DESIGNER_STYLE_FUSION) {
         wtk_theme_fusion(&theme);
         wtk_app_set_theme(app, &theme);

@@ -54,11 +54,11 @@ CMake 产物同样包含 `designer\build-cmake\bin\styles\wintk_builtin_styles.d
 
 ## 运行时风格
 
-核心 WinTk 默认使用原始 GDI 自绘。Designer.exe 只包含插件加载器和 WinTk GDI，启动时从 `styles/` 加载风格 DLL：
+框架默认使用原生 Win32 控件；Designer 和导出的页面切到 `WTK_CONTROLS_CUSTOM`，保持自绘预览一致。Designer.exe 只包含插件加载器和自绘核心，启动时从 `styles/` 加载风格 DLL：
 
-- `Windows 原生`：内置 DLL 实现 UxTheme 原生外观
+- `Windows 原生`：内置 DLL 实现 UxTheme 原生外观的自绘画笔
 - `Fusion`：内置 DLL 实现中性灰 Qt Fusion 方向外观
-- `WinTk`：核心 GDI，不注册 painter
+- `WinTk`：核心自绘，不注册额外 painter
 - 外部业务风格：菜单“导入风格 DLL...”选择插件后立即加入列表
 
 Designer 会扫描 exe 同目录的 `styles/*.dll`。移动 Designer 时请把 `styles` 文件夹一起复制。插件 ABI 和编写方式见 `styles/README.md`。

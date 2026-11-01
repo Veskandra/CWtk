@@ -145,6 +145,18 @@ int wtk__is_field(WtkWidget *widget)
                       widget->type == WTK_TYPE_TREE);
 }
 
+int wtk__uses_native_control(WtkWidget *widget)
+{
+    if (!widget || !widget->app ||
+        widget->app->controls != WTK_CONTROLS_NATIVE)
+        return 0;
+    return widget->type == WTK_TYPE_BUTTON ||
+           widget->type == WTK_TYPE_CHECKBOX ||
+           widget->type == WTK_TYPE_RADIO ||
+           widget->type == WTK_TYPE_SLIDER ||
+           widget->type == WTK_TYPE_PROGRESS;
+}
+
 int wtk__is_container(WtkWidget *widget)
 {
     return widget && (widget->type == WTK_TYPE_WINDOW ||
@@ -711,7 +723,7 @@ static void refresh_style_tree(WtkWidget *widget)
     int i;
     if (!widget)
         return;
-    if (wtk__is_field(widget)) {
+    if (wtk__is_field(widget) || wtk__uses_native_control(widget)) {
         wtk__native_theme_changed(widget);
         wtk__native_position(widget);
     }
@@ -752,6 +764,13 @@ WtkApp *wtk_app_new(void)
     app->style_requested = style_from_environment();
     app->style_resolved = resolve_style(app->style_requested);
     app->renderer = WTK_RENDERER_GDI;
+    app->controls = WTK_CONTROLS_NATIVE;
+    {
+        const char *controls = getenv("WINTK_CONTROLS");
+        if (controls && (strcmp(controls, "custom") == 0 ||
+                         strcmp(controls, "wintk") == 0))
+            app->controls = WTK_CONTROLS_CUSTOM;
+    }
     app->theme_custom = 0;
     wtk_theme_default(&app->theme);
     wcsncpy(app->ui_font_family, choose_ui_font_family(),
@@ -930,6 +949,25 @@ int wtk_app_set_renderer(WtkApp *app, WtkRenderer renderer)
 WtkRenderer wtk_app_get_renderer(WtkApp *app)
 {
     return app ? app->renderer : WTK_RENDERER_GDI;
+}
+
+int wtk_app_set_controls(WtkApp *app, WtkControls controls)
+{
+    int i;
+    if (!app)
+        return 0;
+    app->controls = controls == WTK_CONTROLS_CUSTOM
+                        ? WTK_CONTROLS_CUSTOM
+                        : WTK_CONTROLS_NATIVE;
+    for (i = 0; i < app->window_count; ++i)
+        wtk__apply_controls_tree(app->windows[i]);
+    invalidate_all_windows(app);
+    return 1;
+}
+
+WtkControls wtk_app_get_controls(WtkApp *app)
+{
+    return app ? app->controls : WTK_CONTROLS_NATIVE;
 }
 
 static void refresh_theme_tree(WtkWidget *widget)
@@ -2123,7 +2161,7 @@ HWND wtk__focus_target(WtkWidget *widget)
 {
     if (!widget || !widget->enabled || !widget->visible)
         return NULL;
-    if (wtk__is_field(widget))
+    if (wtk__is_field(widget) || wtk__uses_native_control(widget))
         return widget->input;
     if (widget->type == WTK_TYPE_RADIOGROUP) {
         int i;

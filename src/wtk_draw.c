@@ -911,6 +911,10 @@ void wtk__paint_widget(WtkWidget *widget, HDC dc, const RECT *bounds)
 {
     if (!widget)
         return;
+    if (wtk__uses_native_control(widget)) {
+        fill_rect(dc, *bounds, backdrop_color(widget));
+        return;
+    }
     if (widget->type != WTK_TYPE_CANVAS &&
         widget->app->style_painter &&
         widget->app->style_painter->paint) {

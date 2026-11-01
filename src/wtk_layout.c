@@ -604,7 +604,7 @@ static void finish_child_layout(WtkWidget *child)
 {
     if (!child || !child->hwnd || child->pending_free)
         return;
-    if (wtk__is_field(child))
+    if (wtk__is_field(child) || wtk__uses_native_control(child))
         wtk__native_position(child);
     if (wtk__is_container(child) && child->layout_mode != WTK_LAYOUT_NONE)
         wtk__layout_children(child);

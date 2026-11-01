@@ -2,7 +2,7 @@
 
 对应版本：1.0.0。公开头文件：`include/wintk.h`。
 
-所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。WinTk 核心默认使用原始 GDI 自绘，并可选启用 Direct2D 形状渲染；Native/Fusion 外观由 Designer 的 `WtkStylePainter` 模块提供。
+所有公开文本使用 UTF-8 编码。布局尺寸、padding、边框、圆角和字号都使用 96 DPI 逻辑单位；鼠标事件坐标和 Canvas 绘制尺寸使用设备像素。WinTk 默认使用原生 Win32 控件；`WTK_CONTROLS_CUSTOM` 可切回自绘后端（GDI，或可选 Direct2D 形状）。Native/Fusion 外观由 Designer 的 `WtkStylePainter` 模块提供。
 
 ---
 
@@ -89,6 +89,7 @@ typedef void (*WtkMenuActionFn)(WtkWidget *window, WtkMenuAction *action,
 | `WtkButtonStyle` | `WTK_BUTTON_PRIMARY/SECONDARY/GHOST/DANGER` |
 | `WtkStyle` | `WTK_STYLE_AUTO/FUSION/NATIVE/WINTK`（兼容性提示） |
 | `WtkRenderer` | `WTK_RENDERER_GDI`, `WTK_RENDERER_D2D` |
+| `WtkControls` | `WTK_CONTROLS_NATIVE`, `WTK_CONTROLS_CUSTOM` |
 | `WtkCursor` | `WTK_CURSOR_ARROW/HAND/IBEAM/CROSS/SIZE_H/SIZE_V/SIZE_ALL/SIZE_NWSE/SIZE_NESW/NO` |
 | `WtkIcon` | `WTK_ICON_NONE/INFO/WARNING/ERROR/QUESTION` |
 | `WtkMouseButton` | `WTK_MOUSE_LEFT=1`, `WTK_MOUSE_RIGHT=2`, `WTK_MOUSE_MIDDLE=3` |
@@ -236,11 +237,32 @@ WtkRenderer wtk_app_get_renderer(WtkApp *app);
 
 - 默认 `WTK_RENDERER_GDI`。
 - `WTK_RENDERER_D2D` 让核心自绘控件用 `ID2D1DCRenderTarget` 绘制抗锯齿的圆角、描边、椭圆和滑块等形状。
-- 文本仍由 GDI/ClearType 绘制；原生 EDIT/LISTBOX 仍是系统控件。
+- 文本仍由 GDI/ClearType 绘制；原生输入控件和 `WTK_CONTROLS_NATIVE` 下的按钮/复选框/滑块/进度条仍是系统控件，不受 D2D 影响。要观察 D2D 控件形状，需同时使用 `WTK_CONTROLS_CUSTOM`。
 - 如果已安装 `WtkStylePainter`，核心会把控件交给 painter（GDI 路径），D2D 后端不覆盖该风格模块。
 - `wtk_app_set_renderer` 返回 `1` 表示目标后端已激活；Direct2D 初始化失败会回退 GDI 并返回 `0`。
 - 需要链接 `d2d1` 和 `ole32`；程序应在 UI 线程调用。
 - D2D 是可选路径：不调用这个 API 的程序仍只依赖 GDI。
+
+### 控件后端：原生 / WinTk 自绘
+
+```c
+typedef enum WtkControls {
+    WTK_CONTROLS_NATIVE = 0,  /* 默认 */
+    WTK_CONTROLS_CUSTOM
+} WtkControls;
+
+int wtk_app_set_controls(WtkApp *app, WtkControls controls);
+WtkControls wtk_app_get_controls(WtkApp *app);
+```
+
+- 默认 `WTK_CONTROLS_NATIVE`：`Button`、`Checkbox`、`Radio`、`Slider`、`Progress` 使用标准 Win32/common controls。
+- `WTK_CONTROLS_CUSTOM`：这些控件恢复 WinTk 自绘外观（GDI；若启用 D2D 则形状走 D2D）。
+- `Entry`、`Text`、`Listbox`、`Tree` 始终是原生控件，不受这个开关影响。
+- 原生模式下按钮样式、圆角、自定义配色和 `show_percent` 等自绘细节不会生效；这是系统控件的限制。
+- 可以在创建控件前设置，也可以在运行时切换；运行时切换会销毁并重建这些简单控件的原生 child。
+- 环境变量 `WINTK_CONTROLS=custom`（或 `wintk`）可用于启动时选择自绘控件。
+- **Designer 本身使用自绘后端**，以保证 Native/Fusion/WinTk 风格预览一致；`designer_style_apply()` 也会切换到自绘后端。
+- 原生控件和 D2D：原生按钮/复选框等由系统绘制；D2D 只作用于自绘控件和 D2D Canvas。
 
 ### 自定义风格画笔：WtkStylePainter
 
@@ -264,14 +286,14 @@ void *wtk_app_get_style_painter_data(WtkApp *app);
 WtkWidgetKind wtk_widget_kind(WtkWidget *widget);
 ```
 
-- 这是核心与外部风格模块之间的正式扩展点。核心自身始终走原始 GDI 绘制。
+- 这是核心与外部风格模块之间的正式扩展点。原生控件后端由系统绘制；`WTK_CONTROLS_CUSTOM` 的自绘控件才交给 painter/GDI。
 - `paint` 用于普通控件和窗口背景；核心会在双缓冲 HDC 上调用它。Canvas 内容仍由核心的 `draw_callback` 绘制。
 - `field_metrics` 可选，用设备像素返回单行 EDIT/LISTBOX 的宿主 inset 和文本 margin。
 - `WtkPaintState` 暴露：
   - 控件类型、文本、字体、背景/前景/边框和尺寸
   - hover/pressed/focused/checked/selected/enabled
   - 按钮样式、焦点环、进度、滑块值和只读/密码状态
-- 注册 painter 会立即刷新现有窗口；传 `NULL` 恢复核心 GDI。
+- 注册 painter 会立即刷新现有窗口；传 `NULL` 恢复核心自绘外观。
 - `designer/styles/designer_style.c` 是内置 Native/Fusion 画笔的源码；它编译成 `wintk_builtin_styles.dll`，不进入 Designer.exe。
 
 ### 风格插件 DLL

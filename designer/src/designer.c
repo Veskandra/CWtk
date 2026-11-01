@@ -3548,6 +3548,8 @@ static int run_designer(void)
     app = wtk_app_new();
     if (!app)
         return 1;
+    /* Designer itself, and the style previews, use the custom-drawn backend. */
+    wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
     designer = (Designer *)calloc(1, sizeof(*designer));
     if (!designer) {
         wtk_app_free(app);

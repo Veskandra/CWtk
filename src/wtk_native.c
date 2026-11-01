@@ -29,26 +29,38 @@ static void native_emit_key(WtkWidget *widget, WtkEventType type, WPARAM key)
 
 void wtk__native_refresh_brush(WtkWidget *widget)
 {
-    if (!widget || !wtk__is_field(widget))
+    WtkColor bg;
+    if (!widget || (!wtk__is_field(widget) &&
+                    !wtk__uses_native_control(widget)))
         return;
     if (widget->input_brush) {
         DeleteObject(widget->input_brush);
         widget->input_brush = NULL;
     }
-    widget->input_brush =
-        CreateSolidBrush(wtk__colorref(wtk__field_bg(widget)));
+    bg = wtk__is_field(widget)
+             ? wtk__field_bg(widget)
+             : (widget->parent ? wtk__container_bg(widget->parent)
+                               : widget->app->theme.surface);
+    widget->input_brush = CreateSolidBrush(wtk__colorref(bg));
 }
 
 HBRUSH wtk__native_ctlcolor(WtkWidget *widget, HDC dc, UINT message)
 {
     WtkColor bg;
     WtkColor fg;
-    if (!widget || !wtk__is_field(widget))
+    if (!widget ||
+        (!wtk__is_field(widget) && !wtk__uses_native_control(widget)))
         return (HBRUSH)GetStockObject(WHITE_BRUSH);
     (void)message;
 
-    bg = wtk__field_bg(widget);
-    fg = wtk__field_fg(widget);
+    if (wtk__is_field(widget)) {
+        bg = wtk__field_bg(widget);
+        fg = wtk__field_fg(widget);
+    } else {
+        bg = widget->parent ? wtk__container_bg(widget->parent)
+                            : widget->app->theme.surface;
+        fg = widget->app->theme.text;
+    }
     if (!widget->input_brush)
         wtk__native_refresh_brush(widget);
 
@@ -60,7 +72,8 @@ HBRUSH wtk__native_ctlcolor(WtkWidget *widget, HDC dc, UINT message)
 
 void wtk__native_theme_changed(WtkWidget *widget)
 {
-    if (!widget || !wtk__is_field(widget))
+    if (!widget || (!wtk__is_field(widget) &&
+                    !wtk__uses_native_control(widget)))
         return;
     wtk__native_refresh_brush(widget);
     wtk__native_position(widget);
@@ -71,7 +84,8 @@ void wtk__native_theme_changed(WtkWidget *widget)
 
 void wtk__native_font_changed(WtkWidget *widget)
 {
-    if (!widget || !wtk__is_field(widget) || !widget->input)
+    if (!widget || !widget->input ||
+        (!wtk__is_field(widget) && !wtk__uses_native_control(widget)))
         return;
     SendMessageW(widget->input, WM_SETFONT, (WPARAM)widget->font, TRUE);
     wtk__native_position(widget);
@@ -80,7 +94,8 @@ void wtk__native_font_changed(WtkWidget *widget)
 
 void wtk__native_enabled_changed(WtkWidget *widget)
 {
-    if (!widget || !wtk__is_field(widget))
+    if (!widget || (!wtk__is_field(widget) &&
+                    !wtk__uses_native_control(widget)))
         return;
     if (widget->input)
         EnableWindow(widget->input, widget->enabled);
@@ -216,11 +231,41 @@ void wtk__create_native_input(WtkWidget *widget)
     const WCHAR *class_name;
     HWND input;
 
-    if (!widget || !wtk__is_field(widget) || !widget->hwnd)
+    if (!widget || !widget->hwnd)
+        return;
+    if (!wtk__is_field(widget) && !wtk__uses_native_control(widget))
         return;
     app = widget->app;
 
-    if (widget->type == WTK_TYPE_ENTRY) {
+    if (wtk__uses_native_control(widget)) {
+        switch (widget->type) {
+        case WTK_TYPE_BUTTON:
+            class_name = L"BUTTON";
+            style |= (widget->button_style == WTK_BUTTON_PRIMARY
+                          ? BS_DEFPUSHBUTTON
+                          : BS_PUSHBUTTON) |
+                     WS_TABSTOP;
+            break;
+        case WTK_TYPE_CHECKBOX:
+            class_name = L"BUTTON";
+            style |= BS_AUTOCHECKBOX | WS_TABSTOP;
+            break;
+        case WTK_TYPE_RADIO:
+            class_name = L"BUTTON";
+            style |= BS_RADIOBUTTON | WS_TABSTOP;
+            break;
+        case WTK_TYPE_SLIDER:
+            class_name = TRACKBAR_CLASSW;
+            style |= TBS_HORZ | TBS_NOTICKS | WS_TABSTOP;
+            break;
+        case WTK_TYPE_PROGRESS:
+            class_name = PROGRESS_CLASSW;
+            style |= PBS_SMOOTH;
+            break;
+        default:
+            return;
+        }
+    } else if (widget->type == WTK_TYPE_ENTRY) {
         class_name = L"EDIT";
         style |= ES_LEFT | ES_AUTOHSCROLL | ES_NOHIDESEL;
     } else if (widget->type == WTK_TYPE_TEXT) {
@@ -250,6 +295,32 @@ void wtk__create_native_input(WtkWidget *widget)
 
     widget->input = input;
     SendMessageW(input, WM_SETFONT, (WPARAM)widget->font, TRUE);
+
+    if (wtk__uses_native_control(widget)) {
+        if (widget->type == WTK_TYPE_BUTTON ||
+            widget->type == WTK_TYPE_CHECKBOX ||
+            widget->type == WTK_TYPE_RADIO) {
+            SetWindowTextW(input, widget->text ? widget->text : L"");
+            if (widget->type != WTK_TYPE_BUTTON)
+                SendMessageW(input, BM_SETCHECK,
+                             widget->checked ? BST_CHECKED : BST_UNCHECKED,
+                             0);
+        } else if (widget->type == WTK_TYPE_SLIDER) {
+            SendMessageW(input, TBM_SETRANGE, TRUE,
+                         MAKELPARAM(widget->value_min, widget->value_max));
+            SendMessageW(input, TBM_SETPOS, TRUE, widget->value);
+            SendMessageW(input, TBM_SETLINESIZE, 0, widget->value_step);
+            SendMessageW(input, TBM_SETPAGESIZE, 0, widget->value_step * 10);
+        } else if (widget->type == WTK_TYPE_PROGRESS) {
+            SendMessageW(input, PBM_SETRANGE32, 0, 1000);
+            SendMessageW(input, PBM_SETPOS,
+                         (WPARAM)(widget->progress * 1000.0), 0);
+        }
+        wtk__native_refresh_brush(widget);
+        wtk__native_position(widget);
+        EnableWindow(input, widget->enabled);
+        return;
+    }
 
     if (widget->type == WTK_TYPE_LISTBOX && widget->virtual_count > 0) {
         SendMessageW(input, LB_SETITEMHEIGHT, 0,
@@ -324,6 +395,12 @@ void wtk__native_position(WtkWidget *widget)
         width = 0;
     if (height < 0)
         height = 0;
+
+    if (wtk__uses_native_control(widget)) {
+        SetWindowPos(widget->input, NULL, 0, 0, width, height,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        return;
+    }
 
     if (widget->app->style_painter &&
         widget->app->style_painter->field_metrics) {
@@ -496,6 +573,34 @@ void wtk__native_command(WtkWidget *widget, WPARAM wparam, LPARAM lparam)
         case LBN_KILLFOCUS:
             widget->focused = 0;
             wtk__invalidate(widget);
+            wtk__emit(widget, WTK_EVENT_FOCUS_OUT);
+            break;
+        default:
+            break;
+        }
+    } else if (wtk__uses_native_control(widget)) {
+        switch (code) {
+        case BN_CLICKED:
+            if (widget->type == WTK_TYPE_BUTTON) {
+                wtk__emit(widget, WTK_EVENT_CLICK);
+            } else if (widget->type == WTK_TYPE_CHECKBOX) {
+                widget->checked =
+                    SendMessageW(widget->input, BM_GETCHECK, 0, 0) ==
+                    BST_CHECKED;
+                wtk__emit_change(widget, widget->checked);
+            } else if (widget->type == WTK_TYPE_RADIO) {
+                WtkWidget *group = widget->parent;
+                int index = wtk__radio_index(widget);
+                if (group && index >= 0)
+                    wtk__radio_select(group, index, 0, 1);
+            }
+            break;
+        case BN_SETFOCUS:
+            widget->focused = 1;
+            wtk__emit(widget, WTK_EVENT_FOCUS_IN);
+            break;
+        case BN_KILLFOCUS:
+            widget->focused = 0;
             wtk__emit(widget, WTK_EVENT_FOCUS_OUT);
             break;
         default:

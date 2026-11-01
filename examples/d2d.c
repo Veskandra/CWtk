@@ -107,6 +107,7 @@ static int run_d2d(void)
 
     if (!app)
         return 1;
+    wtk_app_set_controls(app, WTK_CONTROLS_CUSTOM);
     if (!wtk_app_set_renderer(app, WTK_RENDERER_D2D)) {
         wtk_message_box(NULL, "Direct2D 不可用",
                         "无法创建 Direct2D 渲染目标，程序将使用 GDI。",
@@ -131,8 +132,8 @@ static int run_d2d(void)
     wtk_pack(title, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 0);
 
     hint = wtk_label(card,
-                     "核心控件的圆角/描边走 D2D，文字仍由 GDI ClearType 绘制；"
-                     "Canvas 使用原生 ID2D1RenderTarget。");
+                     "圆角卡片、按钮和 Canvas 走 D2D；文字仍由 GDI ClearType "
+                     "绘制。默认程序使用原生 Win32 控件。");
     wtk_widget_set_foreground(hint, theme->muted);
     wtk_widget_set_font(hint, NULL, 9, WTK_FONT_NORMAL);
     wtk_label_set_wrap_width(hint, 720);
@@ -142,7 +143,8 @@ static int run_d2d(void)
     wtk_widget_set_background(canvas, WTK_RGB(16, 24, 40));
     wtk_pack(canvas, WTK_SIDE_TOP, WTK_FILL_BOTH, 1, 0, 10);
 
-    status = wtk_label(card, "Render: Direct2D 1.1 · Canvas: ID2D1RenderTarget");
+    status = wtk_label(card,
+                       "Render: Direct2D 1.1 · Controls: Custom · Canvas: ID2D1RenderTarget");
     wtk_widget_set_foreground(status, theme->muted);
     wtk_widget_set_font(status, NULL, 9, WTK_FONT_NORMAL);
     wtk_pack(status, WTK_SIDE_TOP, WTK_FILL_X, 0, 0, 6);

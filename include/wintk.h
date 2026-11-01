@@ -135,6 +135,14 @@ typedef enum WtkRenderer {
     WTK_RENDERER_D2D
 } WtkRenderer;
 
+/* Native-first controls: Button/Checkbox/Radio/Slider/Progress use standard
+ * Win32/common controls. CUSTOM keeps WinTk's GDI/D2D self-drawn appearance.
+ * Entry/Text/Listbox/Tree are always native. */
+typedef enum WtkControls {
+    WTK_CONTROLS_NATIVE = 0,
+    WTK_CONTROLS_CUSTOM
+} WtkControls;
+
 typedef enum WtkIcon {
     WTK_ICON_NONE = 0,
     WTK_ICON_INFO,
@@ -250,6 +258,11 @@ void wtk_app_free(WtkApp *app);
  * renderer is active; if D2D initialization fails the app stays on GDI. */
 int wtk_app_set_renderer(WtkApp *app, WtkRenderer renderer);
 WtkRenderer wtk_app_get_renderer(WtkApp *app);
+
+/* Select native Win32 controls (default) or WinTk custom-drawn controls.
+ * Can be called at runtime; existing simple controls are rebuilt. */
+int wtk_app_set_controls(WtkApp *app, WtkControls controls);
+WtkControls wtk_app_get_controls(WtkApp *app);
 
 /* Shows all windows that have not been shown yet, then runs the event loop.
  * Returns the event loop's exit code. */

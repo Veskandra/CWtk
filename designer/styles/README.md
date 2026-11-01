@@ -6,7 +6,7 @@ Designer 从 exe 同目录的 `styles/` 加载 `*.dll`。内置插件源码是 `
 designer/build/styles/wintk_builtin_styles.dll
 ```
 
-`Designer.exe` 不包含 Native/Fusion 的绘制代码，只保留插件加载器和 WinTk 核心 GDI。
+`Designer.exe` 不包含 Native/Fusion 的绘制代码，只保留插件加载器和 WinTk 自绘核心（`WTK_CONTROLS_CUSTOM`）。
 
 ## ABI
 
@@ -94,4 +94,4 @@ gcc -shared -std=c11 -DUNICODE -D_UNICODE ^
 
 - 插件是原生 Windows DLL，只应加载可信文件。
 - 当前 Designer 运行时和预览会使用导入的风格；生成代码的伴生模块仍是 `designer_style.c` 中的内置 Native/Fusion 实现。
-- 删除 `styles/` 后 Designer 仍可运行，但只保留 WinTk 核心 GDI 风格。
+- 删除 `styles/` 后 Designer 仍可运行，但只保留 WinTk 自绘风格。

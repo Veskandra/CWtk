@@ -1,4 +1,5 @@
 #include "wtk_internal.h"
+#include <shellapi.h>
 
 /* 模态窗口状态（wtk_window_set_modal / wtk__modal_release 使用） */
 static WtkWidget *g_modal_window = NULL;
@@ -140,7 +141,8 @@ int wtk__is_field(WtkWidget *widget)
 {
     return widget && (widget->type == WTK_TYPE_ENTRY ||
                       widget->type == WTK_TYPE_TEXT ||
-                      widget->type == WTK_TYPE_LISTBOX);
+                      widget->type == WTK_TYPE_LISTBOX ||
+                      widget->type == WTK_TYPE_TREE);
 }
 
 int wtk__is_container(WtkWidget *widget)
@@ -1219,10 +1221,10 @@ WtkWidget *wtk_window(WtkApp *app, const char *title, int width, int height)
     wtitle = wtk__u8_to_u16(title ? title : "");
     style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 
-    /* WS_EX_COMPOSITED：让 Windows 把整窗（含所有子窗口）双缓冲合成后再显示。
-     * 拖动分栏等高频重排时，子窗口不会各自先擦后画，视觉上就没有闪烁。
-     * 只影响绘制路径，不改布局/交互，风险很低。 */
-    hwnd = CreateWindowExW(WS_EX_COMPOSITED, WTK_CLASS_WINDOW, wtitle,
+    /* 不要使用 WS_EX_COMPOSITED：它会在任意子控件重绘时重新合成整个窗口，
+     * 鼠标 hover 高亮都会造成整窗闪烁。拖动时的布局提交由
+     * wtk_layout.c 的 DeferWindowPos 批处理负责。 */
+    hwnd = CreateWindowExW(0, WTK_CLASS_WINDOW, wtitle,
                            style, CW_USEDEFAULT, CW_USEDEFAULT,
                            physical_w, physical_h,
                            NULL, NULL, app->instance, window);
@@ -2204,6 +2206,22 @@ int wtk_app_add_shortcut(WtkApp *app, int vk, unsigned mods, WtkMenuFn callback,
     s->callback = callback;
     s->userdata = userdata;
     return 1;
+}
+
+/* 用系统默认程序打开路径（文件夹→资源管理器）。成功返回 1。 */
+int wtk_open_path(const char *path)
+{
+    WCHAR *wpath;
+    HINSTANCE r;
+
+    if (!path || !path[0])
+        return 0;
+    wpath = wtk__u8_to_u16(path);
+    if (!wpath)
+        return 0;
+    r = ShellExecuteW(NULL, L"open", wpath, NULL, NULL, SW_SHOWNORMAL);
+    free(wpath);
+    return ((INT_PTR)r > 32) ? 1 : 0;
 }
 
 int wtk_run(WtkApp *app)

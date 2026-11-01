@@ -23,6 +23,8 @@
 - **Designer 风格插件**：启动时扫描 `styles/*.dll`，动态列出 Windows 原生、Fusion 和 WinTk；支持导入第三方风格 DLL；导出代码可附带内置风格的伴生模块。
 - **可视化设计器子项目**：`designer/` 可独立构建，支持拖拽控件、可拉伸分栏、上下文光标、撤销/重做、风格菜单、实时预览和 C 源码导出。
 - **QMenu 风格菜单**：菜单栏、子菜单、动作句柄、复选/单选、动态启用、快捷键提示和程序触发。
+- **大列表与树**：虚拟列表（百万条 O(1) 建立，只画可见行）、`add_many`/bulk redraw、原生 `SysTreeView32` 树控件。
+- **大文本与闪烁修复**：`text_append`、原生 EDIT 文本上限提升、批量布局提交，避免拖动和 hover 闪屏。详见 [性能与闪烁优化](docs/PERFORMANCE.md)。
 - **统一事件模型**：CLICK、CHANGE、SUBMIT、FOCUS、鼠标、滚轮、键盘、RESIZE、CLOSE。
 - **键盘可用**：Tab / Shift+Tab 焦点循环、按钮 Enter/Space 激活、方向键操作滑块和单选组、Ctrl+Enter 提交多行文本。
 - **原生输入控件**：编辑框、多行文本和列表框基于 Win32 原生控件，同时拥有 GDI 宿主边框、焦点状态、占位符和统一配色。
@@ -131,7 +133,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
 gcc -std=c11 -DUNICODE -D_UNICODE -Iinclude ^
     -finput-charset=UTF-8 -fexec-charset=UTF-8 ^
     app.c build\libwintk.a build\wintk-res.o ^
-    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
+    -o app.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
 ```
 
 如果源码中包含中文字符串，请保留 UTF-8 编译参数；MSVC 使用 `/utf-8`。
@@ -169,7 +171,7 @@ wtk_widget_set_font(button1, NULL, 10, WTK_FONT_BOLD);
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
     page.c designer\styles\designer_style.c build\libwintk.a ^
-    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
+    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
 ```
 
 WinTk 原始 GDI 风格不依赖 `designer_style.c`；只有 Native/Fusion 需要。

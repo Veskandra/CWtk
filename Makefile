@@ -31,7 +31,7 @@ CFLAGS   ?= -O2
 CFLAGS   += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS   += -finput-charset=UTF-8 -fexec-charset=UTF-8
 LDFLAGS  += -mwindows -static-libgcc
-LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme
+LDLIBS   += -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
 
 LIB_SRCS := \
 	src/wtk_core.c \

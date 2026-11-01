@@ -36,6 +36,7 @@ typedef enum WtkWidgetType {
     WTK_TYPE_SLIDER,
     WTK_TYPE_PROGRESS,
     WTK_TYPE_SEPARATOR,
+    WTK_TYPE_TREE,
     WTK_TYPE_CANVAS
 } WtkWidgetType;
 
@@ -250,6 +251,12 @@ struct WtkWidget {
     int readonly;
     int password;
     int suppress_change;
+    int bulk_depth;
+    /* 虚拟列表（LBS_NODATA）：>0 表示启用 */
+    int virtual_count;
+    WtkListItemFn item_draw;
+    void *item_draw_data;
+    int item_height;          /* >0 时不重绘，见 wtk_widget_bulk_begin */
     HBRUSH input_brush;
 
     WtkDrawFn draw_callback;
@@ -260,6 +267,11 @@ struct WtkWidget {
     int resizable;
     int shown;
     int open_counted;
+    /* 树控件：节点句柄数组（wtk_tree_add 返回的下标即此数组下标） */
+    void *items;
+    int item_count;
+    int item_cap;
+
     int pending_free;
     WtkMenu *menu;
 };
@@ -296,6 +308,8 @@ WtkColor wtk__widget_bg(WtkWidget *widget);
 WtkColor wtk__field_bg(WtkWidget *widget);
 WtkColor wtk__field_fg(WtkWidget *widget);
 int wtk__is_field(WtkWidget *widget);
+LRESULT wtk__native_draw_virtual_item(WtkWidget *widget, DRAWITEMSTRUCT *dis);
+int wtk__native_virtual_height(WtkWidget *widget);
 int wtk__is_container(WtkWidget *widget);
 WtkWidget *wtk__toplevel(WtkWidget *widget);
 HWND wtk__focus_target(WtkWidget *widget);
@@ -333,6 +347,7 @@ void wtk__refresh_widget_font(WtkWidget *widget);
 void wtk__create_native_input(WtkWidget *widget);
 void wtk__native_position(WtkWidget *widget);
 void wtk__native_command(WtkWidget *widget, WPARAM wparam, LPARAM lparam);
+void wtk__native_notify(WtkWidget *widget, LPARAM lparam);
 HBRUSH wtk__native_ctlcolor(WtkWidget *widget, HDC dc, UINT message);
 void wtk__native_theme_changed(WtkWidget *widget);
 void wtk__native_font_changed(WtkWidget *widget);

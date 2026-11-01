@@ -170,6 +170,15 @@ void wtk__set_widget_text(WtkWidget *widget, const char *text)
         return;
     }
 
+    /* 内容没变就不重排：状态栏/提示行会被高频刷新，白重排很贵 */
+    if (widget->text) {
+        WCHAR *same = wtk__u8_to_u16(text ? text : "");
+        if (same && wcscmp(same, widget->text) == 0) {
+            free(same);
+            return;
+        }
+        free(same);
+    }
     wide = wtk__u8_to_u16(text ? text : "");
     free(widget->text);
     widget->text = wide;
@@ -202,6 +211,7 @@ static void free_widget_contents(WtkWidget *widget)
     free(widget->grid_col_mins);
     free(widget->grid_row_weights);
     free(widget->grid_row_mins);
+    free(widget->items);
     free(widget);
 }
 
@@ -504,11 +514,30 @@ static LRESULT CALLBACK widget_proc(HWND hwnd, UINT message, WPARAM wparam,
         case WM_COMMAND:
             wtk__native_command(widget, wparam, lparam);
             return 0;
+        case WM_NOTIFY:
+            wtk__native_notify(widget, lparam);
+            return 0;
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORBTN:
             return (LRESULT)wtk__native_ctlcolor(widget, (HDC)wparam, message);
+        case WM_MEASUREITEM: {
+            MEASUREITEMSTRUCT *mis = (MEASUREITEMSTRUCT *)lparam;
+            if (mis && mis->CtlID == WTK_INPUT_ID &&
+                widget->type == WTK_TYPE_LISTBOX && widget->virtual_count > 0) {
+                mis->itemHeight = (UINT)wtk__native_virtual_height(widget);
+                return TRUE;
+            }
+            break;
+        }
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT *dis = (DRAWITEMSTRUCT *)lparam;
+            if (dis && dis->CtlID == WTK_INPUT_ID &&
+                widget->type == WTK_TYPE_LISTBOX && widget->virtual_count > 0)
+                return wtk__native_draw_virtual_item(widget, dis);
+            break;
+        }
         default:
             break;
         }
@@ -1412,4 +1441,107 @@ void wtk_canvas_redraw(WtkWidget *canvas)
 {
     if (canvas && canvas->type == WTK_TYPE_CANVAS)
         wtk__invalidate(canvas);
+}
+
+/* ========================================================================= */
+/* Tree                                                                      */
+/* ========================================================================= */
+
+WtkWidget *wtk_tree(WtkWidget *parent)
+{
+    return wtk__create_widget(parent, WTK_TYPE_TREE, "");
+}
+
+void wtk_tree_clear(WtkWidget *tree)
+{
+    if (!tree || tree->type != WTK_TYPE_TREE || !tree->input)
+        return;
+    tree->suppress_change = 1;
+    SendMessageW(tree->input, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
+    tree->item_count = 0;
+    tree->suppress_change = 0;
+}
+
+/* 添加节点；parent_index < 0 表示根层。返回节点下标（-1 失败）。 */
+int wtk_tree_add(WtkWidget *tree, int parent_index, const char *text, int expanded)
+{
+    TVINSERTSTRUCTW ins;
+    TVITEMW item;
+    HTREEITEM parent = TVI_ROOT;
+    HTREEITEM h;
+    WCHAR *wtext;
+    void **items;
+
+    if (!tree || tree->type != WTK_TYPE_TREE || !tree->input)
+        return -1;
+    items = (void **)tree->items;
+    if (parent_index >= 0) {
+        if (parent_index >= tree->item_count || !items || !items[parent_index])
+            return -1;
+        parent = (HTREEITEM)items[parent_index];
+    }
+    if (tree->item_count >= tree->item_cap) {
+        int cap = tree->item_cap ? tree->item_cap * 2 : 32;
+        void **grown = (void **)realloc(tree->items, (size_t)cap * sizeof(void *));
+        if (!grown)
+            return -1;
+        tree->items = grown;
+        tree->item_cap = cap;
+    }
+    items = (void **)tree->items;
+
+    wtext = wtk__u8_to_u16(text ? text : "");
+    memset(&item, 0, sizeof(item));
+    item.mask = TVIF_TEXT | TVIF_PARAM;
+    item.pszText = wtext;
+    item.cchTextMax = wtext ? (int)wcslen(wtext) : 0;
+    item.lParam = (LPARAM)tree->item_count;
+
+    memset(&ins, 0, sizeof(ins));
+    ins.hParent = parent;
+    ins.hInsertAfter = TVI_LAST;
+    ins.item = item;
+    h = (HTREEITEM)SendMessageW(tree->input, TVM_INSERTITEMW, 0, (LPARAM)&ins);
+    free(wtext);
+    if (!h)
+        return -1;
+    items[tree->item_count] = (void *)h;
+    {
+        int index = tree->item_count++;
+        if (expanded && tree->item_count > 0)
+            SendMessageW(tree->input, TVM_EXPAND, TVE_EXPAND, (LPARAM)h);
+        return index;
+    }
+}
+
+int wtk_tree_selected(WtkWidget *tree)
+{
+    HTREEITEM h;
+    if (!tree || tree->type != WTK_TYPE_TREE || !tree->input)
+        return -1;
+    h = (HTREEITEM)SendMessageW(tree->input, TVM_GETNEXTITEM, TVGN_CARET, 0);
+    if (!h)
+        return -1;
+    {
+        TVITEMW item;
+        memset(&item, 0, sizeof(item));
+        item.mask = TVIF_PARAM;
+        item.hItem = h;
+        if (SendMessageW(tree->input, TVM_GETITEMW, 0, (LPARAM)&item))
+            return (int)item.lParam;
+    }
+    return -1;
+}
+
+void wtk_tree_expand(WtkWidget *tree, int index, int expand)
+{
+    void **items;
+    if (!tree || tree->type != WTK_TYPE_TREE || !tree->input || index < 0 ||
+        index >= tree->item_count)
+        return;
+    items = (void **)tree->items;
+    if (!items || !items[index])
+        return;
+    SendMessageW(tree->input, TVM_EXPAND, expand ? TVE_EXPAND : TVE_COLLAPSE,
+                 (LPARAM)items[index]);
 }

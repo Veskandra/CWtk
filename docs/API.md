@@ -331,6 +331,7 @@ int  wtk_pointer_pos(WtkWidget *widget, int *x, int *y);
 int  wtk_widget_client_size(WtkWidget *widget, int *width, int *height);
 void wtk_window_bring_to_front(WtkWidget *widget);
 int  wtk_window_get_title(WtkWidget *window, char *buf, size_t cap);
+int  wtk_open_path(const char *path);
 ```
 
 - `wtk_window_set_modal(window, 1)` 会禁用同一 App 里其它已显示窗口；模态窗口销毁（包括点 X）时自动恢复，不会锁死界面。
@@ -340,6 +341,7 @@ int  wtk_window_get_title(WtkWidget *window, char *buf, size_t cap);
 - `wtk_pointer_pos()` 返回相对控件客户区的设备像素坐标，成功返回 `1`。
 - `wtk_widget_client_size()` 返回客户区设备像素尺寸。
 - `wtk_window_get_title()` 把标题写入 UTF-8 缓冲区，返回字节数（不含结尾 0）；`cap` 需要大于 0。
+- `wtk_open_path()` 调用系统默认关联打开文件或文件夹（文件夹会进 Explorer），成功请求返回 `1`。需要链接 `shell32`。
 
 ---
 
@@ -601,6 +603,11 @@ void wtk_widget_set_padding(WtkWidget *widget,
 WtkApp *wtk_widget_app(WtkWidget *widget);
 WtkWidget *wtk_widget_parent(WtkWidget *widget);
 HWND wtk_widget_hwnd(WtkWidget *widget);
+HWND wtk_widget_input_hwnd(WtkWidget *widget);
+
+/* 批量更新：begin/end 之间不重绘，end 时统一刷新。 */
+void wtk_widget_bulk_begin(WtkWidget *widget);
+void wtk_widget_bulk_end(WtkWidget *widget);
 
 void wtk_widget_set_background(WtkWidget *widget, WtkColor color);
 void wtk_widget_set_foreground(WtkWidget *widget, WtkColor color);
@@ -620,7 +627,8 @@ void wtk_widget_redraw(WtkWidget *widget);
 void wtk_widget_destroy(WtkWidget *widget);
 ```
 
-- `wtk_widget_hwnd` 返回宿主 HWND；Entry/Text/Listbox 的真正原生 child 需用 `GetWindow(hwnd, GW_CHILD)`。
+- `wtk_widget_hwnd` 返回宿主 HWND；Entry/Text/Listbox/Tree 的真正原生 child 用 `wtk_widget_input_hwnd()`，不要再自己 `EnumChildWindows`。
+- `wtk_widget_bulk_begin/end` 用于成批修改文本或列表：期间禁止重绘，结束时只刷一次。适合循环 `wtk_text_append()` / `wtk_listbox_add()`；可嵌套，必须成对调用。
 - `wtk_widget_set_font(..., family, ...)` 的 `family` 为 `NULL` 或空字符串时，使用 `wtk_app_ui_font_family()` 返回的本地化字体。中文应用推荐传 `NULL` 或显式传 `"Microsoft YaHei UI"`。
 - `set_cursor` 支持箭头、手型、I 型、十字、水平/垂直/全向缩放、斜向缩放和禁止光标。
 - `wtk_widget_set_focus_ring(widget, 0)` 可关闭 Canvas 等自定义控件的强调色焦点框（分隔条使用），不影响键盘焦点。
@@ -708,6 +716,7 @@ void wtk_entry_select_all(WtkWidget *entry);
 ```c
 WtkWidget *wtk_text(WtkWidget *parent);
 void wtk_text_set_text(WtkWidget *text, const char *value);
+void wtk_text_append(WtkWidget *text, const char *value);
 const char *wtk_text_get_text(WtkWidget *text);
 void wtk_text_set_placeholder(WtkWidget *text, const char *placeholder);
 void wtk_text_set_readonly(WtkWidget *text, int readonly);
@@ -717,6 +726,8 @@ void wtk_text_set_readonly(WtkWidget *text, int readonly);
 - 输入触发 `WTK_EVENT_CHANGE`；Ctrl+Enter 触发 `WTK_EVENT_SUBMIT`。
 - 默认请求尺寸约 360×180 逻辑像素；用 `set_size` 调整高宽。
 - 公开文本统一使用 LF (`\n`) 分隔行；WinTk 内部转换为原生 EDIT 所需的 CRLF，并在读取时转换回 LF。设置和读取都支持多行文本。
+- `wtk_text_append()` 定位到末尾再插入，避免每次把全文重新 `SetWindowText`；批量循环时配合 `wtk_widget_bulk_begin/end`。
+- 原生 EDIT 默认约 32K 字符上限；WinTk 创建时已把限制提高到 `0x7FFFFFFE`，大 JSON/日志不会再被静默截断。
 
 ---
 
@@ -725,12 +736,22 @@ void wtk_text_set_readonly(WtkWidget *text, int readonly);
 ```c
 WtkWidget *wtk_listbox(WtkWidget *parent);
 int wtk_listbox_add(WtkWidget *listbox, const char *text);
+int wtk_listbox_add_many(WtkWidget *listbox,
+                         const char *const *texts, int count);
 void wtk_listbox_clear(WtkWidget *listbox);
 int wtk_listbox_count(WtkWidget *listbox);
 int wtk_listbox_get_selection(WtkWidget *listbox);
 void wtk_listbox_select(WtkWidget *listbox, int index);
 void wtk_listbox_remove(WtkWidget *listbox, int index);
 const char *wtk_listbox_get_item(WtkWidget *listbox, int index);
+
+/* 虚拟列表：条目数据由调用方保存，控件只记数量。 */
+typedef void (*WtkListItemFn)(WtkWidget *list, int index, HDC dc,
+                              const RECT *rc, void *userdata);
+int  wtk_listbox_set_virtual(WtkWidget *list, int count,
+                             WtkListItemFn draw, void *userdata);
+void wtk_listbox_virtual_refresh(WtkWidget *list);
+int  wtk_listbox_virtual_count(WtkWidget *list);
 ```
 
 - 基于原生 `LISTBOX`，自带滚动条。
@@ -738,6 +759,26 @@ const char *wtk_listbox_get_item(WtkWidget *listbox, int index);
 - 双击触发 `WTK_EVENT_DOUBLE_CLICK`。
 - `wtk_listbox_select(-1)` 清除选择；非负索引会把对应项滚动到可见位置。
 - `get_item` 返回的指针在下一次调用 `get_item` 或控件销毁前有效。
+- 大批量添加用 `wtk_listbox_add_many()`；它内部用 bulk redraw，只刷一次。逐条 `wtk_listbox_add` 在数万条规模会很慢。
+- 虚拟列表使用 `LBS_OWNERDRAWFIXED | LBS_NODATA`：`count` 可以是几十万，建立是 O(1)，只绘制可见行。选中/焦点背景由框架绘制，`draw` 只画当前行的内容。`count <= 0` 会退回普通 listbox。
+- 虚拟列表数据变化后调用 `wtk_listbox_virtual_refresh()`；条目数据由应用保存，框架不拥有。
+
+### Tree
+
+```c
+WtkWidget *wtk_tree(WtkWidget *parent);
+void wtk_tree_clear(WtkWidget *tree);
+int  wtk_tree_add(WtkWidget *tree, int parent_index,
+                  const char *text, int expanded);
+int  wtk_tree_selected(WtkWidget *tree);
+void wtk_tree_expand(WtkWidget *tree, int index, int expand);
+```
+
+- 基于原生 `SysTreeView32`；`parent_index < 0` 表示根节点，返回节点索引。
+- 选择变化触发 `WTK_EVENT_CHANGE`，`event->value` 为节点索引；双击触发 `WTK_EVENT_DOUBLE_CLICK`。
+- 节点索引在 `wtk_tree_clear()` 前稳定；清空后从 0 重新开始。
+- 原生树在折叠已选中节点时可能把选择移到父节点，这是 Windows 行为；应用应通过索引/类型判断，而不要只凭“选中变化”切换视图。
+- 当前不支持图标、复选框和多选；需要原生消息时用 `wtk_widget_input_hwnd()`。
 
 ---
 
@@ -866,6 +907,7 @@ wtk_widget_set_padding(card, 20, 20, 20, 20);
 | Button | CLICK、鼠标、键盘、焦点 |
 | Entry/Text | CHANGE、SUBMIT、FOCUS_IN/OUT、键盘、鼠标宿主边框事件 |
 | Listbox | CHANGE、DOUBLE_CLICK、FOCUS_IN/OUT、原生滚动 |
+| Tree | CHANGE、DOUBLE_CLICK、FOCUS_IN/OUT、原生滚动 |
 | Checkbox | CHANGE、鼠标、键盘、焦点 |
 | Radio | 通过 group 的 CHANGE；鼠标、键盘、焦点 |
 | Slider | CHANGE、鼠标、键盘、焦点 |
@@ -881,7 +923,7 @@ wtk_widget_set_padding(card, 20, 20, 20, 20);
 
 WinTk 需要：
 
-- 链接库：`user32`, `gdi32`, `comctl32`；使用 Designer 的 Native/Fusion 风格时还需 `uxtheme`
+- 链接库：`user32`, `gdi32`, `comctl32`, `shell32`；使用 Designer 的 Native/Fusion 风格时还需 `uxtheme`
 - 编译定义：`UNICODE`, `_UNICODE`
 - Windows GUI 子系统：MinGW 的 `-mwindows`
 - 公共控件 v6 manifest（`resources/wintk.rc` 已包含）
@@ -902,7 +944,7 @@ build/libwintk.a
 designer/styles/designer_style.c
 ```
 
-并添加 `-Idesigner/styles -Isrc`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
+并添加 `-Idesigner/styles -Isrc`，链接 `shell32`。生成的 `page.c` 会调用 `designer_style_apply()`；纯 WinTk GDI 页面不需要这个模块。
 
 Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/wintk_builtin_styles.dll`。移动 Designer 时需要把 `styles` 文件夹一起复制；删除插件目录后 Designer 仍可运行，但只提供 WinTk 核心风格。
 
@@ -961,5 +1003,8 @@ Designer 本身运行时的 Native/Fusion 则来自 exe 同目录的 `styles/win
 - 菜单、系统消息框和文件对话框始终使用 Windows 原生实现，不随 painter 重绘。
 - painter 模块可访问 `WtkPaintState`；如果直接使用 Designer 的 `designer_style.c`，需要同时提供 `include` 与 `src` 头文件路径。
 - 没有 per-monitor DPI 的实时重建；系统 DPI 在不同显示上可能看起来略有缩放差异。
+- 不使用 `WS_EX_COMPOSITED`（它会因任意子控件重绘而整窗闪烁）；拖动布局用 `DeferWindowPos` 批量提交，并统一失效子树。
+- 标准 `LISTBOX` 的 `LB_ADDSTRING` 本身就较慢；大列表请用 `wtk_listbox_add_many()` 或虚拟列表，不要逐条添加。
+- 原生 EDIT 的文本上限已提高到 `0x7FFFFFFE`；超大文本仍建议用 Canvas/分页查看，避免一次布局整段内容。
 - 自绘控件使用 GDI，不支持 alpha 或硬件加速混合。
 - 这是一套小框架，目标是把 tkinter 式的编程模型带到纯 C/Win32 小工具中，而不是替代 Qt/GTK/WinUI。

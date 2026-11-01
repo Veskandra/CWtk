@@ -530,6 +530,10 @@ void wtk__measure_widget(WtkWidget *widget, int *width, int *height)
         natural_w = wtk__logical(widget->app, 260);
         natural_h = wtk__logical(widget->app, 200);
         break;
+    case WTK_TYPE_TREE:
+        natural_w = wtk__logical(widget->app, 260);
+        natural_h = wtk__logical(widget->app, 200);
+        break;
 
     case WTK_TYPE_SLIDER:
         natural_w = wtk__logical(widget->app, 220);
@@ -607,6 +611,12 @@ static void finish_child_layout(WtkWidget *child)
     wtk__invalidate(child);
 }
 
+/* 拖动分栏时整棵树会重新布局。逐个子窗口 SetWindowPos 会让每个子窗口
+ * 在移动过程中各自重绘，形成撕裂/闪烁；这里在有可见窗口时用 DeferWindowPos
+ * 一次性提交，并在结尾统一失效整棵子树。初始隐藏布局不批处理，避免
+ * “窗口还没显示就被 NOREDRAW 掉”的回归。 */
+static HDWP g_defer_layout;
+
 static void place_child(WtkWidget *child, int x, int y, int width, int height)
 {
     if (!child || !child->hwnd || child->pending_free)
@@ -619,8 +629,24 @@ static void place_child(WtkWidget *child, int x, int y, int width, int height)
     child->y = y;
     child->w = width;
     child->h = height;
-    SetWindowPos(child->hwnd, NULL, x, y, width, height,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+    if (g_defer_layout) {
+        HDWP next = DeferWindowPos(
+            g_defer_layout, child->hwnd, NULL, x, y, width, height,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+        if (next)
+            g_defer_layout = next;
+        else {
+            /* 批次失效时先把已排队的位置提交，再退回普通提交。 */
+            HDWP failed = g_defer_layout;
+            g_defer_layout = NULL;
+            EndDeferWindowPos(failed);
+            SetWindowPos(child->hwnd, NULL, x, y, width, height,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    } else {
+        SetWindowPos(child->hwnd, NULL, x, y, width, height,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     finish_child_layout(child);
 }
 
@@ -1111,6 +1137,9 @@ void wtk__layout_window(WtkWidget *window)
         return;
     }
 
+    if (IsWindowVisible(window->hwnd))
+        g_defer_layout = BeginDeferWindowPos(128);
+
     do {
         app->layout_pending = 0;
         app->in_layout = 1;
@@ -1119,6 +1148,17 @@ void wtk__layout_window(WtkWidget *window)
         passes++;
     } while (app->layout_pending && passes < 4);
     app->layout_pending = 0;
+
+    if (g_defer_layout) {
+        EndDeferWindowPos(g_defer_layout);
+        g_defer_layout = NULL;
+    }
+    if (IsWindowVisible(window->hwnd)) {
+        /* SWP_NOREDRAW 只是延迟子窗口绘制，并不等于不画；统一失效整棵
+         * 子树，保证提交后所有控件都收到一次 WM_PAINT。 */
+        RedrawWindow(window->hwnd, NULL, NULL,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+    }
 }
 
 void wtk__request_relayout(WtkWidget *widget)

@@ -78,7 +78,7 @@ designer\build\wintk_designer.exe
 gcc -std=c11 -DUNICODE -D_UNICODE ^
     -Iinclude -Isrc -Idesigner/styles ^
     page.c designer\styles\designer_style.c build\libwintk.a ^
-    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme
+    -o page.exe -mwindows -luser32 -lgdi32 -lcomctl32 -luxtheme -lshell32
 ```
 
 ## 当前限制

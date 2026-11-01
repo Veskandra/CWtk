@@ -398,6 +398,10 @@ void wtk_window_bring_to_front(WtkWidget *widget);
 /* 读窗口标题（UTF-8），返回字节数。 */
 int wtk_window_get_title(WtkWidget *window, char *buf, size_t cap);
 
+/* Open a path with the system default handler (folder -> Explorer).
+ * Returns 1 when the launch request was issued. */
+int wtk_open_path(const char *path);
+
 /* QMenu-style menu tree. Text may contain '&' mnemonics. A menu bar owns
  * top-level submenus; each submenu owns its actions. All objects are released
  * with the window/app. */
@@ -453,6 +457,17 @@ WtkWidget *wtk_button(WtkWidget *parent, const char *text);
 WtkWidget *wtk_entry(WtkWidget *parent);
 WtkWidget *wtk_text(WtkWidget *parent);
 WtkWidget *wtk_listbox(WtkWidget *parent);
+
+/* --- Tree (native SysTreeView32) --------------------------------------- */
+WtkWidget *wtk_tree(WtkWidget *parent);
+/* Clear all nodes. */
+void wtk_tree_clear(WtkWidget *tree);
+/* Add a node; parent_index < 0 = root level. Returns node index or -1. */
+int wtk_tree_add(WtkWidget *tree, int parent_index, const char *text, int expanded);
+/* Index of the selected node, -1 if none. Selection raises WTK_EVENT_CHANGE
+ * with event.value = node index. */
+int wtk_tree_selected(WtkWidget *tree);
+void wtk_tree_expand(WtkWidget *tree, int index, int expand);
 WtkWidget *wtk_checkbox(WtkWidget *parent, const char *text, int checked);
 WtkWidget *wtk_radiogroup(WtkWidget *parent);
 WtkWidget *wtk_radio(WtkWidget *group, const char *text);
@@ -468,6 +483,13 @@ WtkWidget *wtk_widget_parent(WtkWidget *widget);
  * For entries, text areas and listboxes this is the host window; use the
  * native child returned by GetWindow(..., GW_CHILD) if necessary. */
 HWND wtk_widget_hwnd(WtkWidget *widget);
+/* The real native control (LISTBOX/EDIT...) rather than its host window.
+ * wtk_widget_hwnd(field) returns the host; use this one when you need to
+ * SendMessage listbox or edit messages directly. */
+HWND wtk_widget_input_hwnd(WtkWidget *widget);
+/* Batch updates: wrap a loop of list/text changes; only one repaint at the end. */
+void wtk_widget_bulk_begin(WtkWidget *widget);
+void wtk_widget_bulk_end(WtkWidget *widget);
 void wtk_widget_set_background(WtkWidget *widget, WtkColor color);
 void wtk_widget_set_foreground(WtkWidget *widget, WtkColor color);
 /* family may be NULL/empty to use wtk_app_ui_font_family(). */
@@ -518,12 +540,32 @@ void wtk_entry_select_all(WtkWidget *entry);
 /* Multi-line text editor. Bind WTK_EVENT_CHANGE and WTK_EVENT_SUBMIT
  * (Ctrl+Enter submits). */
 void wtk_text_set_text(WtkWidget *text, const char *value);
+/* O(1) append; use this instead of set_text(full) in loops. */
+void wtk_text_append(WtkWidget *text, const char *value);
 const char *wtk_text_get_text(WtkWidget *text);
 void wtk_text_set_placeholder(WtkWidget *widget, const char *placeholder);
 void wtk_text_set_readonly(WtkWidget *text, int readonly);
 
 /* Listbox. Bind WTK_EVENT_CHANGE and WTK_EVENT_DOUBLE_CLICK. */
 int wtk_listbox_add(WtkWidget *listbox, const char *text);
+/* Bulk append: one repaint for the whole batch (fast for 10k+ rows). */
+int wtk_listbox_add_many(WtkWidget *listbox, const char *const *texts, int count);
+
+/* ------------------------------------------------------------------------- */
+/* Virtual listbox                                                           */
+/* ------------------------------------------------------------------------- */
+/* 用 LBS_OWNERDRAWFIXED | LBS_NODATA 实现：条目数据由你保存，控件只记数量，
+ * 建立 20 万条也是瞬间（LB_SETCOUNT 是 O(1)），绘制只发生在可见行。
+ * 回调里自己画这一行（dc 已经设置好字体；背景/选中态框架已经填好）。 */
+typedef void (*WtkListItemFn)(WtkWidget *list, int index, HDC dc,
+                              const RECT *rc, void *userdata);
+
+/* count<=0 会退回普通 listbox。返回 0 成功，-1 失败。 */
+int wtk_listbox_set_virtual(WtkWidget *list, int count, WtkListItemFn draw,
+                            void *userdata);
+/* 数据变了（或想换行高）时调用，让控件重画。 */
+void wtk_listbox_virtual_refresh(WtkWidget *list);
+int wtk_listbox_virtual_count(WtkWidget *list);
 void wtk_listbox_clear(WtkWidget *listbox);
 int wtk_listbox_count(WtkWidget *listbox);
 int wtk_listbox_get_selection(WtkWidget *listbox);

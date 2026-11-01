@@ -34,7 +34,7 @@ target_include_directories(wintk
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_compile_definitions(wintk PUBLIC UNICODE _UNICODE)
-target_link_libraries(wintk PUBLIC user32 gdi32 comctl32 uxtheme)
+target_link_libraries(wintk PUBLIC user32 gdi32 comctl32 uxtheme shell32)
 
 if(MSVC)
     target_compile_options(wintk PRIVATE /W4)
